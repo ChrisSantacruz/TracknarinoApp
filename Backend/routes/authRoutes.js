@@ -2,115 +2,117 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
 const verificarToken = require('../middleware/authMiddleware');
+const asyncHandler = require('../middleware/asyncHandler');
+const { sendError } = require('../middleware/errorMiddleware');
+const { buildAuthToken, sanitizeUser } = require('../utils/auth');
+
+function sendAuthResponse(res, status, mensaje, usuario) {
+  return res.status(status).json({
+    mensaje,
+    token: buildAuthToken(usuario),
+    usuario: sanitizeUser(usuario),
+  });
+}
 
 // Handler de registro reutilizable (acepta '/registro' y '/register')
-async function handleRegistro(req, res) {
+const handleRegistro = asyncHandler(async (req, res) => {
   const { nombre, correo, contraseña, tipoUsuario, telefono, empresa, empresaAfiliada, licenciaExpedicion, numeroCedula, camion, metodoPago, disponibleParaSolicitarCamioneros } = req.body;
+
+  if (!correo || !contraseña || !tipoUsuario) {
+    return sendError(res, 400, 'Correo, contraseña y tipoUsuario son obligatorios', 'VALIDATION_ERROR');
+  }
 
   // Validación de campos según tipo de usuario
   if (tipoUsuario === 'camionero' && (!camion || !numeroCedula || !licenciaExpedicion || !empresaAfiliada)) {
-    return res.status(400).json({ error: 'Faltan datos de camionero' });
+    return sendError(res, 400, 'Faltan datos de camionero', 'VALIDATION_ERROR');
   }
   if (tipoUsuario === 'contratista' && (!empresa || disponibleParaSolicitarCamioneros === undefined)) {
-    return res.status(400).json({ error: 'Faltan datos de contratista' });
+    return sendError(res, 400, 'Faltan datos de contratista', 'VALIDATION_ERROR');
   }
 
-  try {
-    // Validar que la contraseña no esté vacía
-    if (!contraseña) {
-      return res.status(400).json({ error: 'La contraseña es obligatoria' });
-    }
-
-    // Verificar si el usuario ya existe
-    const usuarioExistente = await User.findOne({ correo });
-    if (usuarioExistente) {
-      return res.status(400).json({ error: 'El correo ya está registrado' });
-    }
-
-    // Encriptar la contraseña
-    const hash = await bcrypt.hash(contraseña, 10);
-
-    // Crear un nuevo usuario
-    const nuevoUsuario = new User({
-      nombre,
-      correo,
-      contraseña: hash,
-      tipoUsuario,
-      telefono,
-      empresa,
-      empresaAfiliada,
-      licenciaExpedicion,
-      numeroCedula,
-      camion,
-      metodoPago,
-      disponibleParaSolicitarCamioneros
-    });
-
-    // Guardar el nuevo usuario
-    await nuevoUsuario.save();
-
-    // Generar el token JWT
-    const token = jwt.sign({ id: nuevoUsuario._id, tipoUsuario }, process.env.JWT_SECRET, { expiresIn: '1h' });
-
-    res.status(201).json({
-      mensaje: 'Usuario registrado correctamente',
-      token,
-      usuario: nuevoUsuario
-    });
-  } catch (error) {
-    // Log de error para diagnóstico
-    console.log('Error al registrar usuario:', error);
-    res.status(500).json({ error: 'Error al registrar usuario', details: error.message });
+  if (!contraseña) {
+    return sendError(res, 400, 'La contraseña es obligatoria', 'VALIDATION_ERROR');
   }
-}
+
+  const usuarioExistente = await User.findOne({ correo });
+  if (usuarioExistente) {
+    return sendError(res, 409, 'El correo ya está registrado', 'USER_ALREADY_EXISTS');
+  }
+
+  const hash = await bcrypt.hash(contraseña, 10);
+
+  const nuevoUsuario = await User.create({
+    nombre,
+    correo,
+    contraseña: hash,
+    tipoUsuario,
+    telefono,
+    empresa,
+    empresaAfiliada,
+    licenciaExpedicion,
+    numeroCedula,
+    camion,
+    metodoPago,
+    disponibleParaSolicitarCamioneros
+  });
+
+  return sendAuthResponse(res, 201, 'Usuario registrado correctamente', nuevoUsuario);
+});
 
 // Registro de un nuevo usuario (rutas en español e inglés)
 router.post('/registro', handleRegistro);
 router.post('/register', handleRegistro);
 
 // Login de un usuario
-router.post('/login', async (req, res) => {
+router.post('/login', asyncHandler(async (req, res) => {
   const { correo, contraseña } = req.body;
 
-  try {
-    const usuario = await User.findOne({ correo });
-    if (!usuario) return res.status(400).json({ mensaje: 'Correo no registrado' });
-
-    const coincide = await bcrypt.compare(contraseña, usuario.contraseña);
-    if (!coincide) return res.status(401).json({ mensaje: 'Contraseña incorrecta' });
-
-    const token = jwt.sign({ id: usuario._id, tipo: usuario.tipoUsuario }, process.env.JWT_SECRET, {
-      expiresIn: '1d'
-    });
-
-    res.json({ token, usuario });
-  } catch (error) {
-    res.status(500).json({ error: 'Error al iniciar sesión' });
+  if (!correo || !contraseña) {
+    return sendError(res, 400, 'Correo y contraseña son obligatorios', 'VALIDATION_ERROR');
   }
-});
+
+  const usuario = await User.findOne({ correo });
+  if (!usuario) {
+    return sendError(res, 401, 'Credenciales inválidas', 'INVALID_CREDENTIALS');
+  }
+
+  const coincide = await bcrypt.compare(contraseña, usuario.contraseña);
+  if (!coincide) {
+    return sendError(res, 401, 'Credenciales inválidas', 'INVALID_CREDENTIALS');
+  }
+
+  return sendAuthResponse(res, 200, 'Inicio de sesión correcto', usuario);
+}));
+
+// Obtener perfil del usuario autenticado
+router.get('/perfil', verificarToken, asyncHandler(async (req, res) => {
+  const usuario = await User.findById(req.usuario.id).select('-contraseña');
+  if (!usuario) {
+    return sendError(res, 404, 'Usuario no encontrado', 'USER_NOT_FOUND');
+  }
+
+  return res.json({ usuario: sanitizeUser(usuario) });
+}));
 
 // Actualizar el método de pago del usuario
-router.put('/actualizar-pago', verificarToken, async (req, res) => {
+router.put('/actualizar-pago', verificarToken, asyncHandler(async (req, res) => {
   const { metodoPago } = req.body;
 
   // Validar el método de pago
   if (!['Visa', 'Nequi', 'Efectivo'].includes(metodoPago)) {
-    return res.status(400).json({ error: 'Método de pago inválido' });
+    return sendError(res, 400, 'Método de pago inválido', 'VALIDATION_ERROR');
   }
 
-  try {
-    const usuario = await User.findById(req.usuario.id);
-    
-    // Actualizar el campo 'metodoPago' en el usuario
-    usuario.metodoPago = metodoPago;
-    await usuario.save();
-
-    res.json({ mensaje: 'Método de pago actualizado', usuario });
-  } catch (error) {
-    res.status(500).json({ error: 'Error al actualizar el método de pago' });
+  const usuario = await User.findById(req.usuario.id);
+  if (!usuario) {
+    return sendError(res, 404, 'Usuario no encontrado', 'USER_NOT_FOUND');
   }
-});
+
+  usuario.metodoPago = metodoPago;
+  await usuario.save();
+
+  return res.json({ mensaje: 'Método de pago actualizado', usuario: sanitizeUser(usuario) });
+}));
 
 module.exports = router;

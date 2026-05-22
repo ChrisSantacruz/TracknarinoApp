@@ -1,0 +1,36 @@
+{
+  "name": "staging-real-evidence-template",
+  "realtimeUrl": "https://staging.example.com",
+  "contractorToken": "REPLACE_WITH_STAGING_CONTRACTOR_JWT",
+  "driverToken": "REPLACE_WITH_STAGING_DRIVER_JWT",
+  "userToken": "REPLACE_WITH_SCOPED_STAGING_JWT",
+  "fleetBboxes": [
+    {
+      "minLng": "-77.40",
+      "minLat": "1.00",
+      "maxLng": "-76.90",
+      "maxLat": "1.40",
+      "limit": "100"
+    }
+  ],
+  "corridorQueries": [
+    {
+      "minLng": "-77.40",
+      "minLat": "1.00",
+      "maxLng": "-76.90",
+      "maxLat": "1.40",
+      "severity": "critical",
+      "limit": "100"
+    }
+  ],
+  "diagnosticWindows": [24, 72, 168],
+  "socketRooms": [
+    {
+      "event": "route:join",
+      "payload": {
+        "routeId": "REPLACE_WITH_REAL_ROUTE_ID"
+      }
+    }
+  ],
+  "capturedGpsUpdates": []
+}

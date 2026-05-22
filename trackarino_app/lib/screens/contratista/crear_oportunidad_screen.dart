@@ -3,7 +3,9 @@ import 'package:intl/intl.dart';
 import '../../services/oportunidad_service.dart';
 
 class CrearOportunidadScreen extends StatefulWidget {
-  const CrearOportunidadScreen({super.key});
+  final bool embedded;
+
+  const CrearOportunidadScreen({super.key, this.embedded = false});
 
   @override
   State<CrearOportunidadScreen> createState() => _CrearOportunidadScreenState();
@@ -21,6 +23,10 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
   final _direccionCargueController = TextEditingController();
   final _direccionDescargueController = TextEditingController();
   final _requisitosController = TextEditingController();
+  final _origenLatController = TextEditingController();
+  final _origenLngController = TextEditingController();
+  final _destinoLatController = TextEditingController();
+  final _destinoLngController = TextEditingController();
   
   DateTime _fechaSeleccionada = DateTime.now().add(const Duration(days: 1));
   bool _isLoading = false;
@@ -29,16 +35,6 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
   @override
   void initState() {
     super.initState();
-    // Llenar con datos de ejemplo para facilitar pruebas
-    _tituloController.text = "Transporte de productos agrícolas";
-    _descripcionController.text = "Se requiere transportar productos agrícolas frescos";
-    _origenController.text = "Pasto";
-    _destinoController.text = "Cali";
-    _precioController.text = "800000";
-    _pesoCargaController.text = "5";
-    _tipoCargaController.text = "Productos agrícolas";
-    _direccionCargueController.text = "Calle 20 # 15-30, Centro, Pasto";
-    _direccionDescargueController.text = "Carrera 15 # 45-12, Norte, Cali";
   }
   
   @override
@@ -53,7 +49,19 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
     _direccionCargueController.dispose();
     _direccionDescargueController.dispose();
     _requisitosController.dispose();
+    _origenLatController.dispose();
+    _origenLngController.dispose();
+    _destinoLatController.dispose();
+    _destinoLngController.dispose();
     super.dispose();
+  }
+
+  double _parseCoordinate(String value, String label, double min, double max) {
+    final coordinate = double.tryParse(value.trim().replaceAll(',', '.'));
+    if (coordinate == null || coordinate < min || coordinate > max) {
+      throw Exception('$label debe estar entre $min y $max');
+    }
+    return coordinate;
   }
   
   Future<void> _mostrarSelectorFecha() async {
@@ -98,6 +106,11 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
         if (precioParsed == null || pesoCargaParsed == null) {
           throw Exception('Precio o peso de carga inválido');
         }
+
+        final origenLat = _parseCoordinate(_origenLatController.text, 'Latitud de origen', -90, 90);
+        final origenLng = _parseCoordinate(_origenLngController.text, 'Longitud de origen', -180, 180);
+        final destinoLat = _parseCoordinate(_destinoLatController.text, 'Latitud de destino', -90, 90);
+        final destinoLng = _parseCoordinate(_destinoLngController.text, 'Longitud de destino', -180, 180);
         
         // Crear un objeto completo con todos los campos necesarios
         final data = {
@@ -105,6 +118,16 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
           'descripcion': _descripcionController.text.trim(),
           'origen': _origenController.text.trim(),
           'destino': _destinoController.text.trim(),
+          'origin': {
+            'name': _origenController.text.trim(),
+            'address': _direccionCargueController.text.trim(),
+            'coordinates': [origenLng, origenLat],
+          },
+          'destination': {
+            'name': _destinoController.text.trim(),
+            'address': _direccionDescargueController.text.trim(),
+            'coordinates': [destinoLng, destinoLat],
+          },
           'direccionCargue': _direccionCargueController.text.trim(),
           'direccionDescargue': _direccionDescargueController.text.trim(),
           'fecha': _fechaSeleccionada.toIso8601String(),
@@ -123,7 +146,9 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
             ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text('Oportunidad creada correctamente')),
             );
-            Navigator.of(context).pop(); // Volver a la pantalla anterior
+            if (!widget.embedded) {
+              Navigator.of(context).pop();
+            }
           }
         } else {
           setState(() {
@@ -143,6 +168,31 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
         }
       }
     }
+  }
+
+  Widget _buildCoordinateField({
+    required TextEditingController controller,
+    required String label,
+    required String hint,
+    required double min,
+    required double max,
+  }) {
+    return TextFormField(
+      controller: controller,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
+      decoration: InputDecoration(
+        labelText: label,
+        hintText: hint,
+        border: const OutlineInputBorder(),
+      ),
+      validator: (value) {
+        final coordinate = double.tryParse((value ?? '').trim().replaceAll(',', '.'));
+        if (coordinate == null || coordinate < min || coordinate > max) {
+          return '$label inválida';
+        }
+        return null;
+      },
+    );
   }
 
   @override
@@ -290,6 +340,32 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
                         return null;
                       },
                     ),
+
+                    const SizedBox(height: 16),
+
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildCoordinateField(
+                            controller: _origenLatController,
+                            label: 'Latitud origen',
+                            hint: 'Ej: 1.2136',
+                            min: -90,
+                            max: 90,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildCoordinateField(
+                            controller: _origenLngController,
+                            label: 'Longitud origen',
+                            hint: 'Ej: -77.2811',
+                            min: -180,
+                            max: 180,
+                          ),
+                        ),
+                      ],
+                    ),
                     
                     const SizedBox(height: 16),
                     
@@ -327,6 +403,32 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
                         }
                         return null;
                       },
+                    ),
+
+                    const SizedBox(height: 16),
+
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _buildCoordinateField(
+                            controller: _destinoLatController,
+                            label: 'Latitud destino',
+                            hint: 'Ej: 3.4516',
+                            min: -90,
+                            max: 90,
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _buildCoordinateField(
+                            controller: _destinoLngController,
+                            label: 'Longitud destino',
+                            hint: 'Ej: -76.5320',
+                            min: -180,
+                            max: 180,
+                          ),
+                        ),
+                      ],
                     ),
                     
                     const SizedBox(height: 16),

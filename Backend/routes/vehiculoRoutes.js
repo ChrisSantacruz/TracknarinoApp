@@ -2,9 +2,10 @@ const express = require('express');
 const router = express.Router();
 const Vehiculo = require('../models/Vehiculo');
 const verificarToken = require('../middleware/authMiddleware');
+const soloRol = require('../middleware/rolMiddleware');
 
 // Registrar vehículo del camionero
-router.post('/registrar', verificarToken, async (req, res) => {
+router.post('/registrar', verificarToken, soloRol('camionero'), async (req, res) => {
   try {
     const { tipoVehiculo, capacidadCarga, marca, modelo, placa, papelesAlDia } = req.body;
 

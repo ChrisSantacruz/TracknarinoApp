@@ -1,239 +1,285 @@
 import 'dart:convert';
 import 'dart:async';
 import 'package:http/http.dart' as http;
-import 'package:flutter/foundation.dart';
 import 'config/api_config.dart';
+import 'observability/operational_logger.dart';
 import 'services/auth_service.dart'; // Para manejo de tokens
 
+class ApiException implements Exception {
+  final String message;
+  final int? statusCode;
+  final bool isNetworkError;
+  final bool isTimeout;
+
+  const ApiException(
+    this.message, {
+    this.statusCode,
+    this.isNetworkError = false,
+    this.isTimeout = false,
+  });
+
+  bool get isRetryable =>
+      isNetworkError ||
+      isTimeout ||
+      statusCode == null ||
+      statusCode == 408 ||
+      statusCode == 429 ||
+      (statusCode != null && statusCode! >= 500);
+
+  @override
+  String toString() => message;
+}
+
 class ApiService {
+  static Future<void> Function()? onUnauthorized;
   // Headers comunes para todas las peticiones
   static Map<String, String> _getHeaders({bool needsAuth = true}) {
     Map<String, String> headers = {
       'Content-Type': 'application/json',
       'Accept': 'application/json',
     };
-    
+
     return headers;
   }
-  
+
   // Agregar token de autorización a los headers
-  static Future<Map<String, String>> _getAuthHeaders({bool needsAuth = true}) async {
+  static Future<Map<String, String>> _getAuthHeaders({
+    bool needsAuth = true,
+  }) async {
     Map<String, String> headers = _getHeaders(needsAuth: needsAuth);
-    
+
     // Agregar token de autenticación si es necesario
     if (needsAuth) {
       final token = await AuthService.getToken();
       if (token != null && token.isNotEmpty) {
         headers['Authorization'] = 'Bearer $token';
-        if (kDebugMode) {
-          print('ADDING AUTH TOKEN: Bearer $token');
-        }
       } else {
-        if (kDebugMode) {
-          print('WARNING: No token available for authenticated request');
-        }
+        OperationalLogger.warning(
+          OperationalLogCategory.security,
+          'api_auth_token_missing',
+        );
       }
     }
-    
+
     return headers;
   }
-  
+
   // Método GET
   static Future<dynamic> get(String url, {bool needsAuth = true}) async {
     try {
-      if (kDebugMode) {
-        print('GET REQUEST: $url');
-      }
-      
+      _logRequest('GET', url, needsAuth: needsAuth);
+
       final uri = Uri.parse(url);
       final headers = await _getAuthHeaders(needsAuth: needsAuth);
-      if (kDebugMode) {
-        print('Headers: $headers');
-      }
-      
-      final response = await http.get(
-        uri,
-        headers: headers,
-      ).timeout(Duration(seconds: ApiConfig.timeoutSeconds));
-      
+      final response = await http
+          .get(uri, headers: headers)
+          .timeout(Duration(seconds: ApiConfig.timeoutSeconds));
+
       return _processResponse(response);
     } catch (e) {
-      if (kDebugMode) {
-        print('GET ERROR: $e');
-      }
+      _logRequestError('GET', url, e);
       throw _handleError(e);
     }
   }
-  
+
   // Método POST
-  static Future<dynamic> post(String url, dynamic data, {bool needsAuth = true}) async {
+  static Future<dynamic> post(
+    String url,
+    dynamic data, {
+    bool needsAuth = true,
+  }) async {
     try {
-      if (kDebugMode) {
-        print('POST REQUEST: $url');
-        print('POST DATA: $data');
-      }
-      
+      _logRequest('POST', url, needsAuth: needsAuth);
+
       final uri = Uri.parse(url);
       final headers = await _getAuthHeaders(needsAuth: needsAuth);
-      if (kDebugMode) {
-        print('Headers: $headers');
-      }
-      
-      final response = await http.post(
-        uri,
-        headers: headers,
-        body: jsonEncode(data),
-      ).timeout(Duration(seconds: ApiConfig.timeoutSeconds));
-      
+      final response = await http
+          .post(uri, headers: headers, body: jsonEncode(data))
+          .timeout(Duration(seconds: ApiConfig.timeoutSeconds));
+
       return _processResponse(response);
     } catch (e) {
-      if (kDebugMode) {
-        print('POST ERROR: $e');
-      }
+      _logRequestError('POST', url, e);
       throw _handleError(e);
     }
   }
-  
+
   // Método POST sin autenticación (para login/registro)
   static Future<dynamic> postUnauth(String url, dynamic data) async {
     return post(url, data, needsAuth: false);
   }
-  
+
   // Método PUT
-  static Future<dynamic> put(String url, dynamic data, {bool needsAuth = true}) async {
+  static Future<dynamic> put(
+    String url,
+    dynamic data, {
+    bool needsAuth = true,
+  }) async {
     try {
-      if (kDebugMode) {
-        print('PUT REQUEST: $url');
-        print('PUT DATA: $data');
-      }
-      
+      _logRequest('PUT', url, needsAuth: needsAuth);
+
       final uri = Uri.parse(url);
       final headers = await _getAuthHeaders(needsAuth: needsAuth);
-      if (kDebugMode) {
-        print('Headers: $headers');
-      }
-      
-      final response = await http.put(
-        uri,
-        headers: headers,
-        body: jsonEncode(data),
-      ).timeout(Duration(seconds: ApiConfig.timeoutSeconds));
-      
+      final response = await http
+          .put(uri, headers: headers, body: jsonEncode(data))
+          .timeout(Duration(seconds: ApiConfig.timeoutSeconds));
+
       return _processResponse(response);
     } catch (e) {
-      if (kDebugMode) {
-        print('PUT ERROR: $e');
-      }
+      _logRequestError('PUT', url, e);
       throw _handleError(e);
     }
   }
-  
+
   // Método DELETE
   static Future<dynamic> delete(String url, {bool needsAuth = true}) async {
     try {
-      if (kDebugMode) {
-        print('DELETE REQUEST: $url');
-      }
-      
+      _logRequest('DELETE', url, needsAuth: needsAuth);
+
       final uri = Uri.parse(url);
       final headers = await _getAuthHeaders(needsAuth: needsAuth);
-      if (kDebugMode) {
-        print('Headers: $headers');
-      }
-      
-      final response = await http.delete(
-        uri,
-        headers: headers,
-      ).timeout(Duration(seconds: ApiConfig.timeoutSeconds));
-      
+      final response = await http
+          .delete(uri, headers: headers)
+          .timeout(Duration(seconds: ApiConfig.timeoutSeconds));
+
       return _processResponse(response);
     } catch (e) {
-      if (kDebugMode) {
-        print('DELETE ERROR: $e');
-      }
+      _logRequestError('DELETE', url, e);
       throw _handleError(e);
     }
   }
-  
+
   // Procesar respuesta HTTP y manejar códigos de estado
   static dynamic _processResponse(http.Response response) {
-    if (kDebugMode) {
-      print('RESPONSE CODE: ${response.statusCode}');
-      print('RESPONSE BODY: ${response.body}');
+    OperationalLogger.info(
+      OperationalLogCategory.connectivity,
+      'api_response',
+      fields: {'statusCode': response.statusCode},
+    );
+
+    if (response.statusCode == 204 || response.body.isEmpty) {
+      return {};
     }
-    
-    switch (response.statusCode) {
-      case 200:
-      case 201:
-        if (response.body.isEmpty) return {};
-        try {
-          return json.decode(response.body);
-        } catch (e) {
-          if (kDebugMode) {
-            print('Error decodificando respuesta JSON: $e');
-          }
-          throw 'Error en el formato de la respuesta del servidor';
-        }
-      case 204:
-        return {};
+
+    dynamic decodedBody;
+    try {
+      decodedBody = json.decode(response.body);
+    } catch (e) {
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        throw const ApiException(
+          'Error en el formato de la respuesta del servidor',
+        );
+      }
+      throw ApiException(
+        _defaultMessageForStatus(response.statusCode),
+        statusCode: response.statusCode,
+      );
+    }
+
+    if (response.statusCode >= 200 && response.statusCode < 300) {
+      return decodedBody;
+    }
+
+    if (response.statusCode == 401) {
+      final handler = onUnauthorized;
+      if (handler != null) {
+        unawaited(handler());
+      }
+    }
+
+    throw ApiException(
+      _extractErrorMessage(decodedBody, response.statusCode),
+      statusCode: response.statusCode,
+    );
+  }
+
+  static String _extractErrorMessage(dynamic decodedBody, int statusCode) {
+    if (decodedBody is Map<String, dynamic>) {
+      final message =
+          decodedBody['mensaje'] ??
+          decodedBody['message'] ??
+          decodedBody['error'];
+      if (message is String && message.isNotEmpty) {
+        return message;
+      }
+    }
+
+    return _defaultMessageForStatus(statusCode);
+  }
+
+  static String _defaultMessageForStatus(int statusCode) {
+    switch (statusCode) {
       case 400:
-        try {
-          final decodedBody = json.decode(response.body);
-          throw decodedBody['mensaje'] ?? 'Solicitud incorrecta. Por favor revisa los datos enviados.';
-        } catch (e) {
-          throw 'Solicitud incorrecta. Por favor revisa los datos enviados.';
-        }
+        return 'Solicitud incorrecta. Por favor revisa los datos enviados.';
       case 401:
-        throw 'No autorizado. Por favor inicia sesión de nuevo.';
+        return 'No autorizado. Por favor inicia sesión de nuevo.';
       case 403:
-        try {
-          final decodedBody = json.decode(response.body);
-          throw decodedBody['mensaje'] ?? 'Acceso denegado. No tienes permiso para esta acción.';
-        } catch (e) {
-          throw 'Acceso denegado. No tienes permiso para esta acción.';
-        }
+        return 'Acceso denegado. No tienes permiso para esta acción.';
       case 404:
-        throw 'La información solicitada no se encontró.';
+        return 'La información solicitada no se encontró.';
       case 422:
-        try {
-          final decodedBody = json.decode(response.body);
-          if (decodedBody['message'] != null) {
-            throw decodedBody['message'];
-          }
-          throw 'Error de validación en los datos.';
-        } catch (e) {
-          throw 'Error de validación en los datos.';
-        }
-      case 500:
-      case 502:
+        return 'Error de validación en los datos.';
       default:
-        try {
-          final decodedBody = json.decode(response.body);
-          throw decodedBody['mensaje'] ?? 'Error en el servidor. Por favor intenta más tarde.';
-        } catch (e) {
-          throw 'Error en el servidor. Por favor intenta más tarde.';
-        }
+        return 'Error en el servidor. Por favor intenta más tarde.';
     }
   }
-  
+
   // Manejar errores comunes
-  static String _handleError(dynamic error) {
-    if (error is http.ClientException) {
-      return 'Error de conexión. Revisa tu conexión a internet.';
-    }
-    
-    if (error is FormatException) {
-      return 'Error en el formato de los datos.';
-    }
-    
-    if (error is TimeoutException) {
-      return 'Tiempo de espera agotado. Intenta de nuevo más tarde.';
-    }
-    
-    if (error is String) {
+  static ApiException _handleError(dynamic error) {
+    if (error is ApiException) {
       return error;
     }
-    
-    return 'Se produjo un error inesperado.';
+
+    if (error is http.ClientException) {
+      return const ApiException(
+        'Error de conexión. Revisa tu conexión a internet.',
+        isNetworkError: true,
+      );
+    }
+
+    if (error is FormatException) {
+      return const ApiException('Error en el formato de los datos.');
+    }
+
+    if (error is TimeoutException) {
+      return const ApiException(
+        'Tiempo de espera agotado. Intenta de nuevo más tarde.',
+        isTimeout: true,
+      );
+    }
+
+    if (error is String) {
+      return ApiException(error);
+    }
+
+    return const ApiException('Se produjo un error inesperado.');
   }
-} 
+
+  static void _logRequest(
+    String method,
+    String url, {
+    required bool needsAuth,
+  }) {
+    OperationalLogger.info(
+      OperationalLogCategory.connectivity,
+      'api_request',
+      fields: {
+        'method': method,
+        'path': Uri.tryParse(url)?.path ?? url,
+        'needsAuth': needsAuth,
+      },
+    );
+  }
+
+  static void _logRequestError(String method, String url, Object error) {
+    OperationalLogger.warning(
+      OperationalLogCategory.connectivity,
+      'api_request_failed',
+      fields: {
+        'method': method,
+        'path': Uri.tryParse(url)?.path ?? url,
+        'errorType': error.runtimeType.toString(),
+      },
+    );
+  }
+}

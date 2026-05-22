@@ -8,10 +8,12 @@ import 'dart:io';
 
 class PerfilCamioneroScreen extends StatefulWidget {
   final User? usuario;
-  
+  final bool embedded;
+
   const PerfilCamioneroScreen({
     super.key,
     this.usuario,
+    this.embedded = false,
   });
 
   @override
@@ -26,12 +28,11 @@ class _PerfilCamioneroScreenState extends State<PerfilCamioneroScreen> {
   String? _selectedMetodoPago;
   bool _isDisponible = true;
   
-  // Estadísticas del camionero (simuladas por ahora)
   final Map<String, dynamic> _estadisticas = {
-    'viajesCompletados': 24,
-    'kilometrosRecorridos': 1250,
-    'calificacionPromedio': 4.8,
-    'ingresosMes': 1250000, // En pesos colombianos
+    'viajesCompletados': null,
+    'kilometrosRecorridos': null,
+    'calificacionPromedio': null,
+    'ingresosMes': null,
   };
 
   @override
@@ -237,17 +238,7 @@ class _PerfilCamioneroScreenState extends State<PerfilCamioneroScreen> {
       return const Center(child: Text('No hay información del usuario'));
     }
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Perfil del Camionero'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.directions_car),
-            onPressed: _registrarVehiculo,
-          ),
-        ],
-      ),
-      body: RefreshIndicator(
+    final body = RefreshIndicator(
         onRefresh: _cargarPerfilCamionero,
         child: SingleChildScrollView(
           physics: const AlwaysScrollableScrollPhysics(),
@@ -326,31 +317,7 @@ class _PerfilCamioneroScreenState extends State<PerfilCamioneroScreen> {
               
               const SizedBox(height: 16),
               
-              // Calificación promedio
-              Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  ...List.generate(5, (index) {
-                    return Icon(
-                      index < (_estadisticas['calificacionPromedio'] as double).floor()
-                        ? Icons.star
-                        : index < (_estadisticas['calificacionPromedio'] as double)
-                            ? Icons.star_half
-                            : Icons.star_border,
-                      color: Colors.amber,
-                      size: 24,
-                    );
-                  }),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${_estadisticas['calificacionPromedio']}',
-                    style: const TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ],
-              ),
+              _buildRatingSummary(),
               
               const SizedBox(height: 24),
               
@@ -461,10 +428,63 @@ class _PerfilCamioneroScreenState extends State<PerfilCamioneroScreen> {
             ],
           ),
         ),
+    );
+
+    if (widget.embedded) return body;
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Perfil'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.directions_car),
+            onPressed: _registrarVehiculo,
+          ),
+        ],
       ),
+      body: body,
     );
   }
   
+  Widget _buildRatingSummary() {
+    final rating = _estadisticas['calificacionPromedio'] as double?;
+
+    if (rating == null) {
+      return const Text(
+        'Sin calificación disponible',
+        style: TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.w500,
+        ),
+      );
+    }
+
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        ...List.generate(5, (index) {
+          return Icon(
+            index < rating.floor()
+                ? Icons.star
+                : index < rating
+                    ? Icons.star_half
+                    : Icons.star_border,
+            color: Colors.amber,
+            size: 24,
+          );
+        }),
+        const SizedBox(width: 8),
+        Text(
+          '$rating',
+          style: const TextStyle(
+            fontSize: 18,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildStatsGrid() {
     return GridView.count(
       padding: const EdgeInsets.symmetric(horizontal: 16),
@@ -477,19 +497,21 @@ class _PerfilCamioneroScreenState extends State<PerfilCamioneroScreen> {
       children: [
         _buildStatCard(
           'Viajes', 
-          '${_estadisticas['viajesCompletados']}',
+          _estadisticas['viajesCompletados']?.toString() ?? 'No disponible',
           Icons.directions_car,
           Colors.blue
         ),
         _buildStatCard(
           'Kilómetros', 
-          '${_estadisticas['kilometrosRecorridos']}',
+          _estadisticas['kilometrosRecorridos']?.toString() ?? 'No disponible',
           Icons.route,
           Colors.green
         ),
         _buildStatCard(
           'Ingresos (mes)', 
-          '\$${(_estadisticas['ingresosMes'] / 1000).round()}K',
+          _estadisticas['ingresosMes'] != null
+              ? '\$${(_estadisticas['ingresosMes'] / 1000).round()}K'
+              : 'No disponible',
           Icons.attach_money,
           Colors.amber
         ),

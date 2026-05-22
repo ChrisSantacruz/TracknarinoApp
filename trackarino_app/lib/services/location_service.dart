@@ -1,126 +1,133 @@
 import 'dart:async';
-import 'dart:math';
+import 'dart:math' as math;
 import 'package:geolocator/geolocator.dart';
 import 'package:flutter/foundation.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart' show LatLng;
 import '../config/api_config.dart';
 import '../models/ubicacion_model.dart';
-import 'api_service.dart';
-import 'dart:math' as math;
+import '../api_service.dart';
+import '../observability/operational_logger.dart';
+import '../offline/sync_engine.dart';
 
+/// Camionero GPS upload. Contractor fleet polling: [ContratistaTrackingService].
 class LocationService extends ChangeNotifier {
   Position? _lastPosition;
   Position? _currentPosition;
-  final StreamController<Position> _positionController = StreamController<Position>.broadcast();
+  final StreamController<Position> _positionController =
+      StreamController<Position>.broadcast();
   StreamSubscription<Position>? _positionStreamSubscription;
-  double _heading = 0.0; // Rumbo/dirección en grados
+  double _heading = 0.0;
   bool _isTracking = false;
-  final int _updateInterval = 15; // Actualizar cada 15 segundos
   String? _camioneroId;
 
-  // Getters
+  DateTime? _lastServerSendAt;
+  Position? _lastSentPosition;
+  int _sendSequence = 0;
+
+  static const Duration _minSendInterval = Duration(seconds: 10);
+  static const double _maxAccuracyMeters = 500;
+
   Stream<Position> get positionStream => _positionController.stream;
   Position? get lastPosition => _lastPosition;
   Position? get currentPosition => _currentPosition;
   double get heading => _heading;
   bool get isTracking => _isTracking;
 
-  // Inicializa el servicio
   Future<void> init(String camioneroId) async {
     _camioneroId = camioneroId;
     await _checkLocationPermission();
   }
 
-  // Verificar permisos de ubicación
   Future<bool> _checkLocationPermission() async {
-    bool serviceEnabled;
-    LocationPermission permission;
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return false;
 
-    // Verificar si el servicio de ubicación está habilitado
-    serviceEnabled = await Geolocator.isLocationServiceEnabled();
-    if (!serviceEnabled) {
-      return false;
-    }
-
-    // Verificar permisos
-    permission = await Geolocator.checkPermission();
+    var permission = await Geolocator.checkPermission();
     if (permission == LocationPermission.denied) {
       permission = await Geolocator.requestPermission();
-      if (permission == LocationPermission.denied) {
-        return false;
-      }
-    }
-    
-    if (permission == LocationPermission.deniedForever) {
-      return false;
+      if (permission == LocationPermission.denied) return false;
     }
 
+    if (permission == LocationPermission.deniedForever) return false;
     return true;
   }
 
-  // Obtener la ubicación actual
   Future<Position?> getCurrentLocation() async {
     final hasPermission = await _checkLocationPermission();
     if (!hasPermission) return null;
 
     try {
-      // Usar la mejor precisión posible
       final position = await Geolocator.getCurrentPosition(
         desiredAccuracy: LocationAccuracy.best,
         timeLimit: const Duration(seconds: 10),
       );
-      
-      debugPrint('📍 Ubicación obtenida: ${position.latitude}, ${position.longitude}');
-      debugPrint('   Precisión: ${position.accuracy}m');
-      
+
+      if (position.accuracy > _maxAccuracyMeters) {
+        OperationalLogger.info(
+          OperationalLogCategory.sync,
+          'gps_position_rejected_accuracy',
+          fields: {'accuracy': position.accuracy},
+        );
+        return null;
+      }
+
       _currentPosition = position;
       notifyListeners();
       return position;
     } catch (e) {
-      debugPrint('❌ Error al obtener ubicación: $e');
-      
-      // Intentar con precisión media si falla
+      OperationalLogger.warning(
+        OperationalLogCategory.sync,
+        'gps_current_position_failed',
+        fields: {'errorType': e.runtimeType.toString()},
+      );
       try {
         final position = await Geolocator.getCurrentPosition(
           desiredAccuracy: LocationAccuracy.high,
         );
-        _currentPosition = position;
-        notifyListeners();
-        return position;
+        if (position.accuracy <= _maxAccuracyMeters) {
+          _currentPosition = position;
+          notifyListeners();
+          return position;
+        }
       } catch (e2) {
-        debugPrint('❌ Error al obtener ubicación (intento 2): $e2');
-        return null;
+        OperationalLogger.warning(
+          OperationalLogCategory.sync,
+          'gps_current_position_retry_failed',
+          fields: {'errorType': e2.runtimeType.toString()},
+        );
       }
+      return null;
     }
   }
 
-  // Iniciar seguimiento de ubicación
   Future<void> startTracking() async {
     if (_isTracking) return;
-    
+
     final hasPermission = await _checkLocationPermission();
     if (!hasPermission) return;
 
     try {
-      // Configuración optimizada para mejor precisión
       const locationSettings = LocationSettings(
-        accuracy: LocationAccuracy.best, // Mejor precisión posible
-        distanceFilter: 5, // Actualizar cada 5 metros de distancia
-        timeLimit: Duration(seconds: 10), // Máximo cada 10 segundos
+        accuracy: LocationAccuracy.best,
+        distanceFilter: 5,
+        timeLimit: Duration(seconds: 10),
       );
 
-      _positionStreamSubscription = Geolocator.getPositionStream(locationSettings: locationSettings)
-          .listen(_updatePosition);
-      
+      _positionStreamSubscription = Geolocator.getPositionStream(
+        locationSettings: locationSettings,
+      ).listen(_updatePosition);
+
       _isTracking = true;
-      debugPrint('✅ Tracking de ubicación iniciado');
       notifyListeners();
     } catch (e) {
-      debugPrint('❌ Error al iniciar tracking: $e');
+      OperationalLogger.warning(
+        OperationalLogCategory.lifecycle,
+        'gps_tracking_start_failed',
+        fields: {'errorType': e.runtimeType.toString()},
+      );
     }
   }
 
-  // Detener seguimiento de ubicación
   void stopTracking() {
     _positionStreamSubscription?.cancel();
     _positionStreamSubscription = null;
@@ -128,136 +135,149 @@ class LocationService extends ChangeNotifier {
     notifyListeners();
   }
 
-  // Actualizar posición y calcular rumbo
   void _updatePosition(Position position) {
-    // Guardar posición anterior
+    if (position.accuracy > _maxAccuracyMeters) return;
+
     if (_currentPosition != null) {
       _lastPosition = _currentPosition;
     }
-    
-    // Actualizar posición actual
+
     _currentPosition = position;
-    
-    // Calcular rumbo si hay posición anterior
+
     if (_lastPosition != null) {
       _heading = _calculateHeading(
-        _lastPosition!.latitude, 
+        _lastPosition!.latitude,
         _lastPosition!.longitude,
         _currentPosition!.latitude,
-        _currentPosition!.longitude
+        _currentPosition!.longitude,
       );
     }
-    
-    // Enviar ubicación al servidor
+
     if (_camioneroId != null) {
       sendLocationToServer(position);
     }
-    
-    // Notificar a los listeners
-    _positionController.add(position);
+
+    if (!_positionController.isClosed) {
+      _positionController.add(position);
+    }
     notifyListeners();
   }
 
-  // Calcular rumbo/dirección en grados (0-360)
   double _calculateHeading(double lat1, double lon1, double lat2, double lon2) {
-    // Convertir a radianes
-    double lat1Rad = lat1 * (pi / 180);
-    double lon1Rad = lon1 * (pi / 180);
-    double lat2Rad = lat2 * (pi / 180);
-    double lon2Rad = lon2 * (pi / 180);
-    
-    // Diferencia de longitud
-    double dLon = lon2Rad - lon1Rad;
-    
-    // Cálculo del rumbo (bearing)
-    double y = sin(dLon) * cos(lat2Rad);
-    double x = cos(lat1Rad) * sin(lat2Rad) - sin(lat1Rad) * cos(lat2Rad) * cos(dLon);
-    double heading = atan2(y, x) * (180 / pi);
-    
-    // Normalizar a 0-360
+    final lat1Rad = lat1 * math.pi / 180;
+    final lon1Rad = lon1 * math.pi / 180;
+    final lat2Rad = lat2 * math.pi / 180;
+    final lon2Rad = lon2 * math.pi / 180;
+    final dLon = lon2Rad - lon1Rad;
+    final y = math.sin(dLon) * math.cos(lat2Rad);
+    final x =
+        math.cos(lat1Rad) * math.sin(lat2Rad) -
+        math.sin(lat1Rad) * math.cos(lat2Rad) * math.cos(dLon);
+    final heading = math.atan2(y, x) * (180 / math.pi);
     return (heading + 360) % 360;
   }
 
-  // Enviar ubicación al servidor
+  bool _shouldThrottleSend(Position position) {
+    final now = DateTime.now();
+    if (_lastServerSendAt != null &&
+        now.difference(_lastServerSendAt!) < _minSendInterval) {
+      return true;
+    }
+
+    if (_lastSentPosition != null) {
+      final distance = Geolocator.distanceBetween(
+        _lastSentPosition!.latitude,
+        _lastSentPosition!.longitude,
+        position.latitude,
+        position.longitude,
+      );
+      if (distance < 3) return true;
+    }
+
+    return false;
+  }
+
+  String _buildClientEventId(Position position) {
+    final ts = position.timestamp.millisecondsSinceEpoch;
+    return '${_camioneroId}_${ts}_${position.latitude.toStringAsFixed(5)}_${position.longitude.toStringAsFixed(5)}';
+  }
+
   Future<void> sendLocationToServer(Position position) async {
     if (_camioneroId == null) return;
+    if (_shouldThrottleSend(position)) return;
 
     try {
+      _sendSequence += 1;
+      final clientEventId = _buildClientEventId(position);
       final data = {
+        'lat': position.latitude,
+        'lng': position.longitude,
         'latitud': position.latitude,
         'longitud': position.longitude,
-        'velocidad': position.speed,
-        'precision': position.accuracy,
-        'rumbo': _heading,
-        'timestamp': DateTime.now().toIso8601String(),
+        'speed': position.speed,
+        'accuracy': position.accuracy,
+        'heading': _heading,
+        'timestamp': position.timestamp.toIso8601String(),
         'camioneroId': _camioneroId,
+        'localUserId': _camioneroId,
+        'source': 'gps',
+        'clientEventId': clientEventId,
+        'sequence': _sendSequence,
       };
 
-      await ApiService.post('${ApiConfig.ubicacion}/actualizar', data);
+      await SyncEngine.instance.enqueueGps(
+        endpoint: '${ApiConfig.ubicacion}/actualizar',
+        payload: data,
+        clientEventId: clientEventId,
+        clientTimestamp: position.timestamp,
+        sequence: _sendSequence,
+      );
+      _lastServerSendAt = DateTime.now();
+      _lastSentPosition = position;
     } catch (e) {
-      print('Error al enviar ubicación al servidor: $e');
+      OperationalLogger.error(
+        OperationalLogCategory.queue,
+        'gps_enqueue_failed',
+        error: e,
+      );
     }
   }
 
-  // Obtener la última ubicación de un camionero
   Future<Ubicacion?> obtenerUltimaPosicionCamionero(String idCamionero) async {
     try {
       final response = await ApiService.get(
-        '${ApiConfig.ubicacion}/ultima/$idCamionero'
+        '${ApiConfig.ubicacion}/ultima/$idCamionero',
       );
-      
       return Ubicacion.fromJson(response);
     } catch (e) {
-      print('Error al obtener última posición: $e');
+      OperationalLogger.warning(
+        OperationalLogCategory.connectivity,
+        'gps_latest_position_fetch_failed',
+        fields: {'errorType': e.runtimeType.toString()},
+      );
       return null;
     }
   }
 
-  // Calcular el ángulo entre dos ubicaciones para orientación del marker
   double calculateHeading(LatLng start, LatLng end) {
-    double lat1 = start.latitude * pi / 180;
-    double lon1 = start.longitude * pi / 180;
-    double lat2 = end.latitude * pi / 180;
-    double lon2 = end.longitude * pi / 180;
-    
-    double dLon = lon2 - lon1;
-    double y = sin(dLon) * cos(lat2);
-    double x = cos(lat1) * sin(lat2) - sin(lat1) * cos(lat2) * cos(dLon);
-    
-    double bearing = atan2(y, x);
-    bearing = bearing * 180 / pi;
+    final lat1 = start.latitude * math.pi / 180;
+    final lon1 = start.longitude * math.pi / 180;
+    final lat2 = end.latitude * math.pi / 180;
+    final lon2 = end.longitude * math.pi / 180;
+    final dLon = lon2 - lon1;
+    final y = math.sin(dLon) * math.cos(lat2);
+    final x =
+        math.cos(lat1) * math.sin(lat2) -
+        math.sin(lat1) * math.cos(lat2) * math.cos(dLon);
+    var bearing = math.atan2(y, x) * (180 / math.pi);
     bearing = (bearing + 360) % 360;
-    
     return bearing;
-  }
-
-  // Generar una ubicación simulada cerca de otra ubicación
-  Position generateNearbyPosition(Position basePosition) {
-    Random random = Random();
-    
-    // Generar desplazamientos aleatorios (entre -0.001 y 0.001 grados)
-    double latOffset = (random.nextDouble() * 0.002) - 0.001;
-    double lonOffset = (random.nextDouble() * 0.002) - 0.001;
-    
-    return Position(
-      latitude: basePosition.latitude + latOffset,
-      longitude: basePosition.longitude + lonOffset,
-      timestamp: DateTime.now(),
-      accuracy: basePosition.accuracy,
-      altitude: basePosition.altitude,
-      heading: basePosition.heading,
-      speed: 5.0 + random.nextDouble() * 20.0, // Velocidad entre 5 y 25 m/s
-      speedAccuracy: basePosition.speedAccuracy,
-      floor: basePosition.floor,
-      isMocked: true,
-      altitudeAccuracy: basePosition.altitudeAccuracy,
-      headingAccuracy: basePosition.headingAccuracy,
-    );
   }
 
   @override
   void dispose() {
     stopTracking();
+    _positionController.close();
     super.dispose();
   }
-} 
+}

@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
+import '../../services/location_service.dart';
+import '../../services/notification_service.dart';
+import '../../state/session_bootstrap.dart';
+import '../../theme/app_colors.dart';
+import '../../theme/app_spacing.dart';
 import '../common/loading_widget.dart';
 
 class RegisterScreen extends StatefulWidget {
@@ -34,26 +39,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
   String _selectedUserType = 'camionero';
   bool _isLoading = false;
   String _errorMessage = '';
-  final bool _showCamioneroFields = false;
 
   @override
   void initState() {
     super.initState();
-    // Valores predeterminados para pruebas
-    _nombreController.text = "Juan";
-    _correoController.text = "juan@eeexampllee.com";
-    _passwordController.text = "123456";
-    _telefonoController.text = "123456789";
-    _empresaAfiliadaController.text = "Empresa X";
-    _licenciaController.text = "2025-01-01";
-    _cedulaController.text = "123456789";
-    _tipoVehiculoController.text = "camion de carga";
-    _capacidadController.text = "1000";
-    _marcaController.text = "Volvo";
-    _modeloController.text = "2020";
-    _placaController.text = "ABC123";
-    
-    _empresaController.text = "Nombre de la empresa";
   }
 
   @override
@@ -116,18 +105,21 @@ class _RegisterScreenState extends State<RegisterScreen> {
           };
         }
 
-        final authService = Provider.of<AuthService>(context, listen: false);
+        final authService = context.read<AuthService>();
         await authService.register(userData);
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('¡Registro exitoso! Iniciando sesión...')),
-          );
+        await SessionBootstrap.applyAuthenticatedSession(
+          auth: authService,
+          notification: context.read<NotificationService>(),
+          location: context.read<LocationService>(),
+        );
+        if (mounted && Navigator.of(context).canPop()) {
+          Navigator.of(context).pop();
         }
-        // La navegación ocurre automáticamente por el cambio de estado en authService
-      } catch (e) {
+      } on AuthFailure catch (e) {
+        setState(() => _errorMessage = e.message);
+      } catch (_) {
         setState(() {
-          _errorMessage = 'Error al registrar: ${e.toString()}';
+          _errorMessage = 'No se pudo completar el registro. Intenta de nuevo.';
         });
       } finally {
         if (mounted) {
@@ -144,12 +136,16 @@ class _RegisterScreenState extends State<RegisterScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Registrarse'),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => Navigator.of(context).maybePop(),
+        ),
       ),
       body: SafeArea(
         child: _isLoading 
           ? const LoadingWidget(message: 'Registrando usuario...')
           : SingleChildScrollView(
-              padding: const EdgeInsets.all(20.0),
+              padding: const EdgeInsets.all(AppSpacing.lg),
               child: Form(
                 key: _formKey,
                 child: Column(

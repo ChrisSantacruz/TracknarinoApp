@@ -1,6 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
+import '../../state/session_bootstrap.dart';
+import '../../services/location_service.dart';
+import '../../services/notification_service.dart';
+import '../../theme/app_colors.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/operational/operational_svg_icon.dart';
 import '../common/loading_widget.dart';
 import 'register_screen.dart';
 
@@ -26,170 +32,152 @@ class _LoginScreenState extends State<LoginScreen> {
   }
 
   Future<void> _login() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() {
-        _isLoading = true;
-        _errorMessage = '';
-      });
+    if (!_formKey.currentState!.validate()) return;
 
-      try {
-        final authService = Provider.of<AuthService>(context, listen: false);
-        await authService.login(
-          _correoController.text.trim(), 
-          _passwordController.text
-        );
-        
-        // Si llegamos aquí, el login fue exitoso y la navegación 
-        // ocurrirá en el widget principal según el estado de autenticación
-      } catch (e) {
-        setState(() {
-          _errorMessage = 'Error al iniciar sesión: ${e.toString()}';
-        });
-      } finally {
-        setState(() {
-          _isLoading = false;
-        });
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+    });
+
+    try {
+      final authService = context.read<AuthService>();
+      await authService.login(
+        _correoController.text.trim(),
+        _passwordController.text,
+      );
+      await SessionBootstrap.applyAuthenticatedSession(
+        auth: authService,
+        notification: context.read<NotificationService>(),
+        location: context.read<LocationService>(),
+      );
+    } on AuthFailure catch (e) {
+      setState(() => _errorMessage = e.message);
+    } catch (e) {
+      setState(() => _errorMessage = 'No se pudo iniciar sesión. Intenta de nuevo.');
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
     return Scaffold(
       body: SafeArea(
-        child: _isLoading 
-          ? const LoadingWidget(message: 'Iniciando sesión...')
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(20.0),
-              child: Form(
-                key: _formKey,
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    const SizedBox(height: 40),
-                    
-                    // Logo
-                    Image.asset(
-                      'assets/logo.png', 
-                      height: 120,
-                      errorBuilder: (_, __, ___) => const Icon(
-                        Icons.local_shipping,
-                        size: 100,
-                        color: Colors.blue,
+        child: _isLoading
+            ? const LoadingWidget(message: 'Iniciando sesión...')
+            : SingleChildScrollView(
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                child: Form(
+                  key: _formKey,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const SizedBox(height: AppSpacing.xl),
+                      Image.asset(
+                        'assets/logo.png',
+                        height: 96,
+                        errorBuilder:
+                            (_, __, ___) => OperationalSvgIcon(
+                              OperationalSvgIcons.truck,
+                              color: AppColors.deepGreen,
+                              size: 72,
+                            ),
                       ),
-                    ),
-                    
-                    const SizedBox(height: 20),
-                    
-                    // Título
-                    const Text(
-                      'Tracknariño',
-                      style: TextStyle(
-                        fontSize: 28,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.blue,
+                      const SizedBox(height: AppSpacing.lg),
+                      Text(
+                        'TrackNariño',
+                        style: theme.textTheme.headlineMedium,
+                        textAlign: TextAlign.center,
                       ),
-                      textAlign: TextAlign.center,
-                    ),
-                    
-                    const SizedBox(height: 10),
-                    
-                    // Subtítulo
-                    const Text(
-                      'Transporte eficiente para Nariño',
-                      style: TextStyle(
-                        fontSize: 16,
-                        color: Colors.grey,
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(
+                        'Operación logística en tiempo real',
+                        style: theme.textTheme.bodySmall,
+                        textAlign: TextAlign.center,
                       ),
-                      textAlign: TextAlign.center,
-                    ),
-                    
-                    const SizedBox(height: 40),
-                    
-                    // Mensaje de error si existe
-                    if (_errorMessage.isNotEmpty)
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        decoration: BoxDecoration(
-                          color: Colors.red.shade50,
-                          borderRadius: BorderRadius.circular(5),
+                      const SizedBox(height: AppSpacing.xl),
+                      if (_errorMessage.isNotEmpty) ...[
+                        Container(
+                          padding: const EdgeInsets.all(AppSpacing.sm),
+                          decoration: BoxDecoration(
+                            color: AppColors.alertCritical.withValues(
+                              alpha: 0.08,
+                            ),
+                            borderRadius: BorderRadius.circular(
+                              AppSpacing.chipRadius,
+                            ),
+                            border: Border.all(
+                              color: AppColors.alertCritical.withValues(
+                                alpha: 0.25,
+                              ),
+                            ),
+                          ),
+                          child: Text(
+                            _errorMessage,
+                            style: theme.textTheme.bodyMedium?.copyWith(
+                              color: AppColors.alertCritical,
+                            ),
+                            textAlign: TextAlign.center,
+                          ),
                         ),
-                        child: Text(
-                          _errorMessage,
-                          style: TextStyle(color: Colors.red.shade800),
-                          textAlign: TextAlign.center,
+                        const SizedBox(height: AppSpacing.md),
+                      ],
+                      TextFormField(
+                        controller: _correoController,
+                        keyboardType: TextInputType.emailAddress,
+                        autofillHints: const [AutofillHints.email],
+                        decoration: const InputDecoration(
+                          labelText: 'Correo electrónico',
+                          prefixIcon: Icon(Icons.email_outlined),
                         ),
+                        validator: (value) {
+                          if (value == null || value.trim().isEmpty) {
+                            return 'Ingresa tu correo';
+                          }
+                          return null;
+                        },
                       ),
-                    
-                    const SizedBox(height: 20),
-                    
-                    // Campo de correo
-                    TextFormField(
-                      controller: _correoController,
-                      keyboardType: TextInputType.emailAddress,
-                      decoration: const InputDecoration(
-                        labelText: 'Correo electrónico',
-                        prefixIcon: Icon(Icons.email),
-                        border: OutlineInputBorder(),
+                      const SizedBox(height: AppSpacing.md),
+                      TextFormField(
+                        controller: _passwordController,
+                        obscureText: true,
+                        autofillHints: const [AutofillHints.password],
+                        decoration: const InputDecoration(
+                          labelText: 'Contraseña',
+                          prefixIcon: Icon(Icons.lock_outline),
+                        ),
+                        validator: (value) {
+                          if (value == null || value.isEmpty) {
+                            return 'Ingresa tu contraseña';
+                          }
+                          return null;
+                        },
                       ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Por favor ingrese su correo';
-                        }
-                        return null;
-                      },
-                    ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    // Campo de contraseña
-                    TextFormField(
-                      controller: _passwordController,
-                      obscureText: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Contraseña',
-                        prefixIcon: Icon(Icons.lock),
-                        border: OutlineInputBorder(),
+                      const SizedBox(height: AppSpacing.lg),
+                      FilledButton(
+                        onPressed: _isLoading ? null : _login,
+                        child: const Text('Iniciar sesión'),
                       ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Por favor ingrese su contraseña';
-                        }
-                        return null;
-                      },
-                    ),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // Botón de inicio de sesión
-                    ElevatedButton(
-                      onPressed: _login,
-                      style: ElevatedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 15),
+                      const SizedBox(height: AppSpacing.sm),
+                      TextButton(
+                        onPressed: () {
+                          Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const RegisterScreen(),
+                            ),
+                          );
+                        },
+                        child: const Text('¿No tienes cuenta? Regístrate'),
                       ),
-                      child: const Text(
-                        'Iniciar Sesión',
-                        style: TextStyle(fontSize: 16),
-                      ),
-                    ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    // Enlace a registro
-                    TextButton(
-                      onPressed: () {
-                        Navigator.of(context).push(MaterialPageRoute(
-                          builder: (context) => const RegisterScreen(),
-                        ));
-                      },
-                      child: const Text('¿No tienes cuenta? Regístrate'),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
               ),
-            ),
       ),
     );
   }
-} 
+}

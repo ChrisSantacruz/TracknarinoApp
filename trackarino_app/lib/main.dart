@@ -1,157 +1,553 @@
+import 'dart:async';
+
+
+
 import 'package:flutter/material.dart';
-import 'dart:ui' as ui;
+
 import 'package:provider/provider.dart';
+
 import 'package:firebase_core/firebase_core.dart';
+
 import 'package:flutter/foundation.dart';
-import 'utils/flutter_map_fixes.dart';
+
+import 'lifecycle/app_lifecycle_coordinator.dart';
+
+import 'observability/error_reporter.dart';
+
+
+import 'api_service.dart';
+
 import 'services/auth_service.dart';
+
 import 'services/location_service.dart';
+
 import 'services/notification_service.dart';
+
+import 'offline/sync_engine.dart';
+
 import 'screens/auth/login_screen.dart';
+
 import 'screens/camionero/camionero_home_screen.dart';
+
 import 'screens/contratista/contratista_home_screen.dart';
+
 import 'screens/common/loading_widget.dart';
 
-// INICIO: PARCHES PARA COMPATIBILIDAD
-// Agrega el método 'hashValues' al ámbito global para que lo use positioned_tap_detector_2
+import 'state/alert_store.dart';
+
+import 'state/session_bootstrap.dart';
+
+import 'state/trip_store.dart';
+
+import 'theme/app_theme.dart';
+
+
+import 'theme/app_spacing.dart';
+
+import 'widgets/operational/operational_error_state.dart';
+
+import 'widgets/realtime_bindings.dart';
+
+
+
 int hashValues(dynamic a, dynamic b) {
+
   return Object.hash(a, b);
+
 }
 
-// Extiende TextTheme para agregar headline5 para retrocompatibilidad
+
+
 extension TextThemeCompat on TextTheme {
-  TextStyle get headline5 => titleLarge ?? const TextStyle(fontSize: 20);
-}
-// FIN: PARCHES PARA COMPATIBILIDAD
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  try {
-    // Para desarrollo, usamos una configuración de Firebase temporal
-    // En producción, deberías usar la configuración generada automáticamente
-    if (kIsWeb) {
-      await Firebase.initializeApp(
-        options: const FirebaseOptions(
-          apiKey: "AIzaSyDEMOKEY",  // Reemplazar con API key real en producción
-          authDomain: "trackarino.firebaseapp.com",
-          projectId: "trackarino",
-          storageBucket: "trackarino.appspot.com",
-          messagingSenderId: "123456789",
-          appId: "1:123456789:web:abcdef1234567890",
-        ),
-      );
-    } else {
-      await Firebase.initializeApp();
-    }
-  } catch (e) {
-    if (kDebugMode) {
-      print('Error al inicializar Firebase: $e');
-    }
-    // La app puede funcionar sin Firebase en desarrollo
-  }
-  runApp(const MyApp());
+  TextStyle get headline5 => titleLarge ?? const TextStyle(fontSize: 20);
+
 }
+
+
+
+void main() {
+
+  runZonedGuarded(
+
+    () {
+
+      WidgetsFlutterBinding.ensureInitialized();
+
+      ErrorReporter.installFlutterHandlers();
+
+      runApp(const AppBootstrap());
+
+    },
+
+    (error, stackTrace) {
+
+      unawaited(
+
+        ErrorReporter.capture(
+
+          error,
+
+          stackTrace,
+
+          type: OperationalErrorType.asyncZone,
+
+        ),
+
+      );
+
+    },
+
+  );
+
+}
+
+
+
+class AppBootstrap extends StatefulWidget {
+
+  const AppBootstrap({super.key});
+
+
+
+  @override
+
+  State<AppBootstrap> createState() => _AppBootstrapState();
+
+}
+
+
+
+class _AppBootstrapState extends State<AppBootstrap> {
+
+  bool _ready = false;
+
+
+
+  @override
+
+  void initState() {
+
+    super.initState();
+
+    _bootstrapApp();
+
+  }
+
+
+
+  Future<void> _bootstrapApp() async {
+
+    try {
+
+      if (kIsWeb) {
+
+        await _initializeFirebaseWeb();
+
+      } else {
+
+        await Firebase.initializeApp();
+
+      }
+
+    } catch (error, stackTrace) {
+
+      await ErrorReporter.capture(
+
+        error,
+
+        stackTrace,
+
+        type: OperationalErrorType.appStartup,
+
+        tags: {'service': 'firebase'},
+
+      );
+
+    }
+
+
+
+    try {
+
+      await SyncEngine.instance.initialize();
+
+    } catch (error, stackTrace) {
+
+      await ErrorReporter.capture(
+
+        error,
+
+        stackTrace,
+
+        type: OperationalErrorType.appStartup,
+
+        tags: {'service': 'sync_engine'},
+
+      );
+
+    }
+
+
+
+    AppLifecycleCoordinator.instance.initialize();
+
+    if (mounted) {
+
+      setState(() => _ready = true);
+
+    }
+
+  }
+
+
+
+  @override
+
+  Widget build(BuildContext context) {
+
+    if (!_ready) {
+
+      return const MaterialApp(
+
+        home: Scaffold(
+
+          body: Center(
+
+            child: LoadingWidget(message: 'Iniciando TrackNariño...'),
+
+          ),
+
+        ),
+
+      );
+
+    }
+
+    return const MyApp();
+
+  }
+
+}
+
+
+
+Future<void> _initializeFirebaseWeb() async {
+
+  const apiKey = String.fromEnvironment('FIREBASE_WEB_API_KEY');
+
+  const authDomain = String.fromEnvironment('FIREBASE_WEB_AUTH_DOMAIN');
+
+  const projectId = String.fromEnvironment('FIREBASE_WEB_PROJECT_ID');
+
+  const storageBucket = String.fromEnvironment('FIREBASE_WEB_STORAGE_BUCKET');
+
+  const messagingSenderId = String.fromEnvironment(
+
+    'FIREBASE_WEB_MESSAGING_SENDER_ID',
+
+  );
+
+  const appId = String.fromEnvironment('FIREBASE_WEB_APP_ID');
+
+
+
+  final missingConfig =
+
+      apiKey.isEmpty ||
+
+      authDomain.isEmpty ||
+
+      projectId.isEmpty ||
+
+      storageBucket.isEmpty ||
+
+      messagingSenderId.isEmpty ||
+
+      appId.isEmpty;
+
+
+
+  if (missingConfig) {
+
+    throw StateError('Firebase web configuration is missing');
+
+  }
+
+
+
+  await Firebase.initializeApp(
+
+    options: const FirebaseOptions(
+
+      apiKey: apiKey,
+
+      authDomain: authDomain,
+
+      projectId: projectId,
+
+      storageBucket: storageBucket,
+
+      messagingSenderId: messagingSenderId,
+
+      appId: appId,
+
+    ),
+
+  );
+
+}
+
+
 
 class MyApp extends StatelessWidget {
+
   const MyApp({super.key});
 
+
+
   @override
+
   Widget build(BuildContext context) {
+
     return MultiProvider(
+
       providers: [
+
         ChangeNotifierProvider(create: (_) => AuthService()),
+
         ChangeNotifierProvider(create: (_) => LocationService()),
+
+        ChangeNotifierProvider(create: (_) => AlertStore()),
+
+        ChangeNotifierProvider(create: (_) => TripStore()),
+
         Provider(create: (_) => NotificationService()),
+
       ],
+
       child: MaterialApp(
+
         title: 'Tracknariño',
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),
-          useMaterial3: true,
-        ),
+
+        theme: AppTheme.light,
+
+        darkTheme: AppTheme.dark,
+
+        themeMode: ThemeMode.system,
+
         home: const AuthWrapper(),
+
         debugShowCheckedModeBanner: false,
+
       ),
+
     );
+
   }
+
 }
+
+
 
 class AuthWrapper extends StatefulWidget {
+
   const AuthWrapper({super.key});
 
+
+
   @override
+
   State<AuthWrapper> createState() => _AuthWrapperState();
+
 }
+
+
 
 class _AuthWrapperState extends State<AuthWrapper> {
-  bool _isInitializing = true;
+
+  bool _servicesReady = false;
+
+  bool _sessionApplied = false;
+
+
 
   @override
+
   void initState() {
+
     super.initState();
-    // Inicializa los servicios y verifica el estado de autenticación
-    _initializeServices();
+
+    WidgetsBinding.instance.addPostFrameCallback((_) => _boot());
+
   }
 
-  Future<void> _initializeServices() async {
-    final authService = Provider.of<AuthService>(context, listen: false);
-    
-    try {
-      // Inicializar el servicio de autenticación
-      await authService.init();
-      
-      if (authService.isAuthenticated) {
-        // Inicializar otros servicios si el usuario está autenticado
-        final notificationService = Provider.of<NotificationService>(context, listen: false);
-        await notificationService.initialize();
-        
-        if (authService.currentUser?.tipoUsuario == 'camionero') {
-          // Inicializar servicio de ubicación para camioneros
-          final locationService = Provider.of<LocationService>(context, listen: false);
-          await locationService.init(authService.currentUser!.id!);
+
+
+  Future<void> _boot() async {
+
+    final auth = context.read<AuthService>();
+
+    ApiService.onUnauthorized = () async {
+
+      if (auth.isAuthenticated) {
+
+        await auth.logout();
+
+        if (mounted) {
+
+          final loc = context.read<LocationService>();
+
+          await SessionBootstrap.teardownSession(location: loc);
+
         }
+
       }
-    } catch (e) {
-      if (kDebugMode) {
-        print('Error al inicializar servicios: $e');
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isInitializing = false;
-        });
-      }
+
+    };
+
+
+
+    await auth.init().timeout(const Duration(seconds: 10));
+
+    if (auth.phase == AuthBootstrapPhase.authenticated) {
+
+      await _applySession();
+
     }
+
+    if (mounted) {
+
+      setState(() => _servicesReady = true);
+
+    }
+
   }
+
+
+
+  Future<void> _applySession() async {
+
+    if (_sessionApplied) return;
+
+    _sessionApplied = true;
+
+    await SessionBootstrap.applyAuthenticatedSession(
+
+      auth: context.read<AuthService>(),
+
+      notification: context.read<NotificationService>(),
+
+      location: context.read<LocationService>(),
+
+    );
+
+    await context.read<TripStore>().refreshActiveTrip();
+
+  }
+
+
 
   @override
+
   Widget build(BuildContext context) {
-    if (_isInitializing) {
-      return const MaterialApp(
-        home: Scaffold(
-          body: Center(
-            child: LoadingWidget(message: 'Iniciando aplicación...'),
-          ),
+
+    final auth = context.watch<AuthService>();
+
+
+
+    if (!_servicesReady || auth.phase == AuthBootstrapPhase.initializing) {
+
+      return const Scaffold(
+
+        body: Center(
+
+          child: LoadingWidget(message: 'Iniciando aplicación...'),
+
         ),
+
       );
+
     }
 
-    // Obtener el estado de autenticación
-    final authService = Provider.of<AuthService>(context);
-    
-    // Si no está autenticado, mostrar pantalla de login
-    if (!authService.isAuthenticated) {
+
+
+    if (auth.phase == AuthBootstrapPhase.unauthenticated) {
+
+      _sessionApplied = false;
+
       return const LoginScreen();
+
     }
-    
-    // Redirigir según el tipo de usuario
-    switch (authService.currentUser?.tipoUsuario) {
-      case 'camionero':
-        return CamioneroHomeScreen(usuario: authService.currentUser!);
-      case 'contratista':
-        return ContratistaHomeScreen(usuario: authService.currentUser!);
-      default:
-        return const LoginScreen(); // Por defecto, si hay algún error
+
+
+
+    if (auth.phase == AuthBootstrapPhase.invalidRole) {
+
+      return Scaffold(
+
+        body: Center(
+
+          child: Padding(
+
+            padding: const EdgeInsets.all(AppSpacing.lg),
+
+            child: OperationalErrorState(
+
+              message:
+
+                  'Tu cuenta no tiene un rol operativo válido (camionero o contratista).',
+
+              onRetry: () async {
+
+                await auth.logout();
+
+              },
+
+              retryLabel: 'Cerrar sesión',
+
+            ),
+
+          ),
+
+        ),
+
+      );
+
     }
+
+
+
+    final user = auth.currentUser!;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+
+      if (!_sessionApplied && auth.isAuthenticated) {
+
+        _applySession();
+
+      }
+
+    });
+
+
+
+    return RealtimeBindings(
+
+      child: switch (user.tipoUsuario) {
+
+        'camionero' => CamioneroHomeScreen(usuario: user),
+
+        'contratista' => ContratistaHomeScreen(usuario: user),
+
+        _ => const LoginScreen(),
+
+      },
+
+    );
+
   }
+
 }
+
+

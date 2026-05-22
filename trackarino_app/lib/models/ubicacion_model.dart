@@ -1,3 +1,5 @@
+import '../utils/geo_utils.dart';
+
 class Ubicacion {
   final String? id;
   final String camionero;
@@ -18,17 +20,26 @@ class Ubicacion {
   });
 
   factory Ubicacion.fromJson(Map<String, dynamic> json) {
+    final parsed = parseLocationPayload(json);
+    if (!parsed.isValid || parsed.coordinate == null) {
+      throw FormatException(parsed.error ?? 'Ubicación sin coordenadas válidas');
+    }
+
+    final timestamp = parseServerDate(json['timestamp']);
+    if (timestamp == null) {
+      throw FormatException('timestamp inválido');
+    }
+
     return Ubicacion(
       id: json['_id'],
-      camionero: json['camionero'],
-      coords: {
-        'lat': json['coords']['lat'].toDouble(),
-        'lng': json['coords']['lng'].toDouble(),
-      },
-      timestamp: DateTime.parse(json['timestamp']),
-      velocidad: json['velocidad']?.toDouble(),
-      precision: json['precision']?.toDouble(),
-      rumbo: json['rumbo']?.toDouble(),
+      camionero: json['camionero'] is Map
+          ? (json['camionero']['_id'] ?? json['camionero']['id']).toString()
+          : json['camionero'].toString(),
+      coords: parsed.coordinate!.toCoordsMap(),
+      timestamp: timestamp,
+      velocidad: (json['speed'] ?? json['velocidad'])?.toDouble(),
+      precision: (json['accuracy'] ?? json['precision'])?.toDouble(),
+      rumbo: (json['heading'] ?? json['rumbo'])?.toDouble(),
     );
   }
 
@@ -36,10 +47,11 @@ class Ubicacion {
     return {
       'camionero': camionero,
       'coords': coords,
+      'coordinates': [coords['lng'], coords['lat']],
       'timestamp': timestamp.toIso8601String(),
-      if (velocidad != null) 'velocidad': velocidad,
-      if (precision != null) 'precision': precision,
-      if (rumbo != null) 'rumbo': rumbo,
+      if (velocidad != null) 'speed': velocidad,
+      if (precision != null) 'accuracy': precision,
+      if (rumbo != null) 'heading': rumbo,
     };
   }
 } 

@@ -28,7 +28,7 @@ router.post('/crear', verificarToken, async (req, res) => {
 });
 
 // Listar calificaciones de un usuario
-router.get('/listar/:id', async (req, res) => {
+router.get('/listar/:id', verificarToken, async (req, res) => {
   try {
     const calificaciones = await Calificacion.find({ usuario: req.params.id })
       .populate('usuario', 'nombre correo');

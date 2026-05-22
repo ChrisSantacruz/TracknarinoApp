@@ -1,14 +1,25 @@
 import 'dart:async';
-import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart' as google_maps;
-import '../../services/location_service.dart';
-import 'package:provider/provider.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:latlong2/latlong.dart' as latlong;
-import 'package:google_maps_flutter_platform_interface/google_maps_flutter_platform_interface.dart' show BitmapDescriptor;
-import '../../utils/flutter_map_fixes.dart'; // Importar el archivo de parches
+
+import '../../models/fleet_tracking_item.dart';
+import '../../map/operational_map_intelligence.dart';
+import '../../services/contratista_tracking_service.dart';
+import '../../services/polling_controller.dart';
+import '../../services/realtime_service.dart';
+import '../../theme/app_colors.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/operational/fleet_map_marker.dart';
+import '../../widgets/operational/map_control_cluster.dart';
+import '../../widgets/operational/operational_empty_state.dart';
+import '../../widgets/operational/operational_error_state.dart';
+import '../../widgets/operational/operational_map_primitives.dart';
+import '../../widgets/operational/operational_skeleton.dart';
+import '../../widgets/operational/operational_status_chip.dart';
+import '../../widgets/operational/realtime_connection_chip.dart';
 
 class SeguimientoScreen extends StatefulWidget {
   const SeguimientoScreen({super.key});
@@ -17,315 +28,360 @@ class SeguimientoScreen extends StatefulWidget {
   State<SeguimientoScreen> createState() => _SeguimientoScreenState();
 }
 
-class _SeguimientoScreenState extends State<SeguimientoScreen> with TickerProviderStateMixin {
-  google_maps.GoogleMapController? _mapController;
-  final Set<google_maps.Marker> _markers = {};
-  final Set<google_maps.Polyline> _polylines = {}; // Para rutas entre puntos
-  final Map<String, dynamic> _camioneros = {};
-  bool _isLoading = true;
-  String _errorMessage = '';
-  bool _isBottomSheetExpanded = false;
-  Timer? _updateTimer;
-  bool _siguiendoCamionero = false; // Para seguir automáticamente al camionero seleccionado
-  String? _camioneroSeleccionadoId;
-  
-  // Centro inicial del mapa (Pasto, Nariño)
-  final google_maps.CameraPosition _initialPosition = const google_maps.CameraPosition(
-    target: google_maps.LatLng(1.2136, -77.2811),
-    zoom: 12,
-  );
+class _SeguimientoScreenState extends State<SeguimientoScreen> {
+  static const Duration _fallbackPollInterval = Duration(seconds: 10);
+  static const Duration _socketHealthyPollInterval = Duration(seconds: 60);
+  static const double _minimumMarkerMoveMeters = 8;
+  static const latlong.LatLng _defaultCenter = latlong.LatLng(1.2136, -77.2811);
 
-  // Controlador para animación del panel deslizante
-  late AnimationController _animationController;
-  
-  // Íconos personalizados para los camioneros
-  BitmapDescriptor? _carIcon;
+  final MapController _mapController = MapController();
+  final PollingController _polling = PollingController();
+  final RealtimeService _realtime = RealtimeService.instance;
+  final OperationalMapDiagnostics _mapDiagnostics = OperationalMapDiagnostics();
+  final Map<String, Map<String, dynamic>> _camioneros = {};
+  final Set<String> _seenRealtimeEvents = {};
+  StreamSubscription<RealtimeConnectionStatus>? _connectionSubscription;
+  StreamSubscription<RealtimeTrackingUpdate>? _trackingSubscription;
+  StreamSubscription<RealtimeTripUpdate>? _tripSubscription;
+
+  bool _initialLoading = true;
+  bool _backgroundRefreshing = false;
+  String _errorMessage = '';
+  String _emptyMessage = '';
+  String? _camioneroSeleccionadoId;
+  int _fleetTotal = 0;
+  int _activeCount = 0;
+  int _staleCount = 0;
+  int _offlineCount = 0;
+  int _noLocationCount = 0;
+  int _activeTripCount = 0;
+  final Set<String> _visibleStates = {'active', 'stale', 'offline'};
+  bool _activeTripsOnly = false;
+  bool _showFleetDensity = false;
+  bool _followSelectedVehicle = true;
+  latlong.LatLng _mapCenter = _defaultCenter;
+  double _mapZoom = 12;
+  DateTime? _lastViewportUpdateAt;
+  RealtimeConnectionStatus _realtimeStatus =
+      RealtimeConnectionStatus.disconnected;
 
   @override
   void initState() {
     super.initState();
-    _loadCustomMapIcons();
-    _cargarUbicacionesCamioneros();
-    
-    _animationController = AnimationController(
-      vsync: this, 
-      duration: const Duration(milliseconds: 300)
-    );
-    
-    // Configurar actualizaciones periódicas de ubicación
-    _updateTimer = Timer.periodic(const Duration(seconds: 10), (timer) {
-      _cargarUbicacionesCamioneros();
-    });
+    _wireRealtime();
+    _loadFleet(initial: true);
+    _startPolling(socketHealthy: false);
+    _realtime.connect();
   }
-  
+
   @override
   void dispose() {
-    _mapController?.dispose();
-    _animationController.dispose();
-    _updateTimer?.cancel();
+    _connectionSubscription?.cancel();
+    _trackingSubscription?.cancel();
+    _tripSubscription?.cancel();
+    _polling.stop();
     super.dispose();
   }
 
-  // Cargar íconos personalizados
-  Future<void> _loadCustomMapIcons() async {
-    final Uint8List markerIcon = await _getBytesFromAsset('assets/images/vehicle_top.png', 80);
-    _carIcon = BitmapDescriptor.bytes(markerIcon);
-    setState(() {});
-  }
-
-  // Convertir imagen de asset a bytes para uso como marcador
-  Future<Uint8List> _getBytesFromAsset(String path, int width) async {
-    ByteData data = await rootBundle.load(path);
-    ui.Codec codec = await ui.instantiateImageCodec(
-      data.buffer.asUint8List(), 
-      targetWidth: width
-    );
-    ui.FrameInfo fi = await codec.getNextFrame();
-    return (await fi.image.toByteData(format: ui.ImageByteFormat.png))!.buffer.asUint8List();
-  }
-
-  Future<void> _cargarUbicacionesCamioneros() async {
-    setState(() {
-      _isLoading = true;
-      _errorMessage = '';
+  void _wireRealtime() {
+    _connectionSubscription = _realtime.connectionStream.listen((status) {
+      if (!mounted) return;
+      final socketHealthy = status == RealtimeConnectionStatus.connected;
+      setState(() => _realtimeStatus = status);
+      _startPolling(socketHealthy: socketHealthy);
+      if (socketHealthy) _realtime.subscribeFleet();
     });
+
+    _trackingSubscription = _realtime.trackingUpdates.listen(
+      _applyRealtimeTrackingUpdate,
+    );
+    _tripSubscription = _realtime.tripUpdates.listen(
+      (_) => _loadFleet(initial: false),
+    );
+  }
+
+  void _startPolling({required bool socketHealthy}) {
+    _polling.start(
+      interval:
+          socketHealthy ? _socketHealthyPollInterval : _fallbackPollInterval,
+      immediate: false,
+      onTick: () => _loadFleet(initial: false),
+    );
+  }
+
+  Future<void> _loadFleet({required bool initial}) async {
+    if (!mounted) return;
+
+    if (initial) {
+      setState(() {
+        _initialLoading = true;
+        _errorMessage = '';
+        _emptyMessage = '';
+      });
+    } else {
+      setState(() => _backgroundRefreshing = true);
+    }
 
     try {
-      // Aquí obtendríamos datos reales del backend
-      // Por ahora usamos una mezcla de datos simulados y datos del servicio
-      final locationService = Provider.of<LocationService>(context, listen: false);
-      
-      final camionerosEnRuta = [
-        {
-          'id': '1',
-          'nombre': 'Carlos Pérez',
-          'telefono': '300-123-4567',
-          'ubicacion': const google_maps.LatLng(1.2236, -77.2751),
-          'ubicacionAnterior': const google_maps.LatLng(1.2230, -77.2745), // Para calcular orientación
-          'rumbo': 45.0, // Orientación simulada en grados
-          'placaVehiculo': 'ABC123',
-          'ultimaActualizacion': DateTime.now().subtract(const Duration(minutes: 5)),
-          'enRuta': true,
-          'destino': 'Ipiales',
-          'origen': 'Pasto',
-          'estado': 'En camino',
-          'tiempoEstimado': '2h 30min',
-          'distanciaRecorrida': '45 km',
-          'carga': 'Alimentos perecederos',
-        },
-        {
-          'id': '2',
-          'nombre': 'María López',
-          'telefono': '310-987-6543',
-          'ubicacion': const google_maps.LatLng(1.2036, -77.2911),
-          'ubicacionAnterior': const google_maps.LatLng(1.2040, -77.2920),
-          'rumbo': 120.0,
-          'placaVehiculo': 'XYZ789',
-          'ultimaActualizacion': DateTime.now().subtract(const Duration(minutes: 15)),
-          'enRuta': true,
-          'destino': 'Tumaco',
-          'origen': 'Pasto',
-          'estado': 'Entrega próxima',
-          'tiempoEstimado': '3h 15min',
-          'distanciaRecorrida': '120 km',
-          'carga': 'Material de construcción',
-        },
-        {
-          'id': '3',
-          'nombre': 'Juan García',
-          'telefono': '321-456-7890',
-          'ubicacion': const google_maps.LatLng(1.1936, -77.3051),
-          'ubicacionAnterior': const google_maps.LatLng(1.1930, -77.3040),
-          'rumbo': 220.0,
-          'placaVehiculo': 'DEF456',
-          'ultimaActualizacion': DateTime.now().subtract(const Duration(minutes: 2)),
-          'enRuta': true,
-          'destino': 'Popayán',
-          'origen': 'Pasto',
-          'estado': 'Recién iniciado',
-          'tiempoEstimado': '4h 45min',
-          'distanciaRecorrida': '10 km',
-          'carga': 'Productos electrónicos',
-        },
-      ];
+      final fleet = await ContratistaTrackingService.fetchFleet();
+      if (!mounted) return;
 
-      // Intentar obtener ubicaciones reales (esto sería reemplazado por llamadas a la API)
-      // Por ejemplo: ubicación = await locationService.obtenerUltimaPosicionCamionero(id);
+      final Map<String, Map<String, dynamic>> camioneros = {};
+      var activeCount = 0;
+      var staleCount = 0;
+      var offlineCount = 0;
+      var noLocationCount = 0;
+      var activeTripCount = 0;
 
-      setState(() {
-        _markers.clear();
-        _camioneros.clear();
-        
-        for (var camionero in camionerosEnRuta) {
-          _camioneros[camionero['id'] as String] = camionero;
-          _agregarMarker(camionero);
+      for (final item in fleet) {
+        final estado = _mapTrackingStatus(item);
+        if (estado == 'active') activeCount += 1;
+        if (estado == 'stale') staleCount += 1;
+        if (estado == 'offline') offlineCount += 1;
+        if (!item.hasLocation || !item.coordinatesValid) noLocationCount += 1;
+        if (item.hasActiveTrip) activeTripCount += 1;
+
+        if (!item.hasLocation ||
+            item.ubicacion == null ||
+            !item.coordinatesValid) {
+          continue;
         }
-        
-        _actualizarPolylines();
-        _isLoading = false;
-        
-        // Si hay un camionero seleccionado, actualizar la vista del mapa
-        if (_camioneroSeleccionadoId != null && _siguiendoCamionero) {
-          final camionero = _camioneros[_camioneroSeleccionadoId];
-          if (camionero != null) {
-            _mapController?.animateCamera(
-              google_maps.CameraUpdate.newLatLngZoom(
-                camionero['ubicacion'],
-                16,
-              ),
-            );
+
+        final coord = item.ubicacion!;
+        final point = latlong.LatLng(coord.lat, coord.lng);
+        final pollTimestamp =
+            item.lastSeenAt ?? item.serverReceivedAt ?? DateTime.now();
+
+        final existing = _camioneros[item.camioneroId];
+        if (existing != null) {
+          final existingTs = existing['ultimaActualizacion'] as DateTime?;
+          if (existingTs != null && existingTs.isAfter(pollTimestamp)) {
+            camioneros[item.camioneroId] =
+                Map<String, dynamic>.from(existing);
+            continue;
           }
         }
-      });
-    } catch (e) {
+
+        camioneros[item.camioneroId] = {
+          'id': item.camioneroId,
+          'nombre': item.nombre,
+          'telefono': item.telefono,
+          'placaVehiculo': item.placaVehiculo,
+          'ubicacion': point,
+          'rumbo': item.heading,
+          'estado': estado,
+          'isStale': item.isStale,
+          'isOffline': item.isOffline,
+          'ultimaActualizacion': pollTimestamp,
+          'origen': item.origenViaje,
+          'destino': item.destinoViaje,
+          'carga': item.carga,
+          'hasActiveTrip': item.hasActiveTrip,
+        };
+      }
+
       setState(() {
-        _errorMessage = 'Error al cargar ubicaciones: $e';
-        _isLoading = false;
+        _camioneros
+          ..clear()
+          ..addAll(camioneros);
+        _initialLoading = false;
+        _backgroundRefreshing = false;
+        _errorMessage = '';
+        _emptyMessage =
+            camioneros.isEmpty
+                ? 'Sin vehículos activos con ubicación verificable en este momento.'
+                : '';
+        _fleetTotal = fleet.length;
+        _activeCount = activeCount;
+        _staleCount = staleCount;
+        _offlineCount = offlineCount;
+        _noLocationCount = noLocationCount;
+        _activeTripCount = activeTripCount;
+      });
+
+      if (_followSelectedVehicle &&
+          _camioneroSeleccionadoId != null &&
+          camioneros.containsKey(_camioneroSeleccionadoId)) {
+        _centerOnCamionero(_camioneroSeleccionadoId!);
+      }
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        if (initial) {
+          _errorMessage = 'Error al cargar ubicaciones: $e';
+        }
+        _initialLoading = false;
+        _backgroundRefreshing = false;
+        if (initial) _emptyMessage = '';
       });
     }
   }
 
-  void _agregarMarker(Map<String, dynamic> camionero) {
-    final markerId = google_maps.MarkerId(camionero['id'] as String);
-    
-    // Calcular rotación del marcador basado en el rumbo
-    double rotacion = camionero['rumbo']?.toDouble() ?? 0.0;
-    
-    // Si tenemos acceso al servicio de ubicación, podemos calcular la rotación
-    // basados en la ubicación anterior y actual
-    if (camionero.containsKey('ubicacionAnterior') && camionero.containsKey('ubicacion')) {
-      final locationService = Provider.of<LocationService>(context, listen: false);
-      final ubicacionAnterior = camionero['ubicacionAnterior'] as google_maps.LatLng;
-      final ubicacionActual = camionero['ubicacion'] as google_maps.LatLng;
-      
-      rotacion = locationService.calculateHeading(ubicacionAnterior, ubicacionActual);
-    }
-    
-    final marker = google_maps.Marker(
-      markerId: markerId,
-      position: camionero['ubicacion'],
-      rotation: rotacion,
-      flat: true, // Importante para que la rotación funcione correctamente
-      anchor: const Offset(0.5, 0.5), // Centrar el ícono en la posición
-      infoWindow: google_maps.InfoWindow(
-        title: camionero['nombre'] as String,
-        snippet: 'Destino: ${camionero['destino'] as String}',
-      ),
-      icon: _carIcon ?? BitmapDescriptor.defaultMarkerWithHue(BitmapDescriptor.hueBlue),
-      onTap: () {
-        _mostrarDetallesCamionero(camionero);
-      },
-    );
-
-    setState(() {
-      _markers.add(marker);
-    });
+  String _mapTrackingStatus(FleetTrackingItem item) {
+    if (item.isOffline) return 'offline';
+    if (item.isStale) return 'stale';
+    if (item.hasLocation && item.coordinatesValid) return 'active';
+    return item.trackingStatus;
   }
-  
-  // Actualizar líneas de ruta entre puntos
-  void _actualizarPolylines() {
-    _polylines.clear();
-    
-    // Aquí obtendrías rutas reales, por ahora hacemos rutas simples entre origen y destino
-    if (_camioneroSeleccionadoId != null) {
-      final camionero = _camioneros[_camioneroSeleccionadoId];
-      if (camionero != null && camionero.containsKey('origen') && camionero.containsKey('destino')) {
-        // En una implementación real, aquí llamarías a una API como Google Directions para obtener la ruta
-        // Por ahora simplemente trazamos una línea directa
-        _polylines.add(
-          google_maps.Polyline(
-            polylineId: google_maps.PolylineId('ruta_${camionero['id']}'),
-            points: [
-              camionero['ubicacion'],
-              google_maps.LatLng(1.2136, -77.2811), // Simulando un punto de destino
-            ],
-            color: Colors.blue,
-            width: 4,
-          ),
-        );
+
+  void _applyRealtimeTrackingUpdate(RealtimeTrackingUpdate update) {
+    if (!mounted) return;
+    if (update.eventId.isNotEmpty) {
+      if (_seenRealtimeEvents.contains(update.eventId)) return;
+      _seenRealtimeEvents.add(update.eventId);
+      if (_seenRealtimeEvents.length > 300) {
+        _seenRealtimeEvents.remove(_seenRealtimeEvents.first);
       }
     }
+
+    final camionero = _camioneros[update.camioneroId];
+    if (camionero == null) {
+      _loadFleet(initial: false);
+      return;
+    }
+
+    final updatedPoint = latlong.LatLng(update.lat, update.lng);
+    final previousPoint = camionero['ubicacion'] as latlong.LatLng;
+    final nextStatus =
+        update.isOffline
+            ? 'offline'
+            : update.isStale
+            ? 'stale'
+            : update.trackingStatus;
+    final movedMeters = const latlong.Distance().as(
+      latlong.LengthUnit.Meter,
+      previousPoint,
+      updatedPoint,
+    );
+    final headingChanged =
+        update.heading != null &&
+        ((update.heading! - (camionero['rumbo'] as double)).abs() >= 8);
+    final statusChanged = camionero['estado'] != nextStatus;
+    final selected = _camioneroSeleccionadoId == update.camioneroId;
+
+    if (!selected &&
+        !statusChanged &&
+        !headingChanged &&
+        movedMeters < _minimumMarkerMoveMeters) {
+      camionero['ultimaActualizacion'] = update.timestamp;
+      return;
+    }
+
+    setState(() {
+      camionero['ubicacion'] = updatedPoint;
+      camionero['rumbo'] = update.heading ?? camionero['rumbo'];
+      camionero['estado'] = nextStatus;
+      camionero['isStale'] = update.isStale;
+      camionero['isOffline'] = update.isOffline;
+      camionero['ultimaActualizacion'] = update.timestamp;
+      _emptyMessage = '';
+      _recalculateVisibleFleetCounts();
+    });
+
+    if (_followSelectedVehicle &&
+        _camioneroSeleccionadoId == update.camioneroId &&
+        !update.isOffline) {
+      _moveCameraIfMeaningful(updatedPoint, _mapController.zoom);
+    }
   }
-  
+
+  void _recalculateVisibleFleetCounts() {
+    var activeCount = 0;
+    var staleCount = 0;
+    var offlineCount = 0;
+
+    for (final camionero in _camioneros.values) {
+      final estado = camionero['estado'] as String;
+      if (estado == 'active') activeCount += 1;
+      if (estado == 'stale') staleCount += 1;
+      if (estado == 'offline') offlineCount += 1;
+    }
+
+    _activeCount = activeCount;
+    _staleCount = staleCount;
+    _offlineCount = offlineCount;
+  }
+
+  void _centerOnCamionero(String id) {
+    final camionero = _camioneros[id];
+    if (camionero == null) return;
+    final point = camionero['ubicacion'] as latlong.LatLng;
+    _mapController.move(point, 16);
+  }
+
+  void _moveCameraIfMeaningful(latlong.LatLng point, double zoom) {
+    final distance = const latlong.Distance().as(
+      latlong.LengthUnit.Meter,
+      _mapController.center,
+      point,
+    );
+    if (distance < 25 && (zoom - _mapController.zoom).abs() < 0.2) return;
+    _mapController.move(point, zoom);
+  }
+
+  Iterable<Map<String, dynamic>> get _visibleCamioneros {
+    return _camioneros.values.where((camionero) {
+      final estado = camionero['estado'] as String;
+      final activeTrip = camionero['hasActiveTrip'] as bool;
+      return _visibleStates.contains(estado) &&
+          (!_activeTripsOnly || activeTrip);
+    });
+  }
+
+  Map<String, dynamic>? get _selectedCamionero {
+    final id = _camioneroSeleccionadoId;
+    if (id == null) return null;
+    return _camioneros[id];
+  }
+
   void _seleccionarCamionero(String id) {
     setState(() {
       _camioneroSeleccionadoId = id;
-      _siguiendoCamionero = true;
-      _actualizarPolylines();
-      
-      // Centrar el mapa en la ubicación del camionero
-      final camionero = _camioneros[id];
-      if (camionero != null) {
-        _mapController?.animateCamera(
-          google_maps.CameraUpdate.newLatLngZoom(
-            camionero['ubicacion'],
-            16,
-          ),
-        );
-      }
+      _followSelectedVehicle = true;
     });
+    _centerOnCamionero(id);
   }
 
   void _mostrarDetallesCamionero(Map<String, dynamic> camionero) {
-    // Seleccionar el camionero automáticamente
-    _seleccionarCamionero(camionero['id']);
-    
+    _seleccionarCamionero(camionero['id'] as String);
+    final estado = camionero['estado'] as String;
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
       builder: (context) {
         return DraggableScrollableSheet(
-          initialChildSize: 0.5,
-          minChildSize: 0.3,
-          maxChildSize: 0.7,
+          initialChildSize: 0.45,
+          minChildSize: 0.28,
+          maxChildSize: 0.72,
           builder: (_, controller) {
-            return Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: const BorderRadius.only(
-                  topLeft: Radius.circular(20),
-                  topRight: Radius.circular(20),
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.grey.withAlpha(128),
-                    spreadRadius: 2,
-                    blurRadius: 7,
-                    offset: const Offset(0, -3),
-                  ),
-                ],
+            return Material(
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(AppSpacing.sheetRadius),
               ),
               child: ListView(
                 controller: controller,
-                padding: const EdgeInsets.all(24),
+                padding: const EdgeInsets.all(AppSpacing.xl),
                 children: [
-                  // Indicador de arrastre
                   Center(
                     child: Container(
                       height: 5,
                       width: 50,
                       decoration: BoxDecoration(
-                        color: Colors.grey[300],
+                        color: Theme.of(context).dividerColor,
                         borderRadius: BorderRadius.circular(10),
                       ),
                     ),
                   ),
-                  
-                  const SizedBox(height: 16),
-                  
-                  // Encabezado con nombre y estado
+                  const SizedBox(height: AppSpacing.md),
                   Row(
                     children: [
                       CircleAvatar(
-                        backgroundColor: Theme.of(context).primaryColor,
-                        radius: 24,
-                        child: const Icon(Icons.person, color: Colors.white, size: 30),
+                        backgroundColor: AppColors.trackingStatusColor(estado),
+                        child: const Icon(Icons.person, color: Colors.white),
                       ),
-                      const SizedBox(width: 16),
+                      const SizedBox(width: AppSpacing.md),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -336,177 +392,36 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> with TickerProvid
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
                             ),
-                            const SizedBox(height: 4),
-                            Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: Colors.green.withAlpha(26),
-                                borderRadius: BorderRadius.circular(10),
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Container(
-                                    width: 8,
-                                    height: 8,
-                                    decoration: const BoxDecoration(
-                                      color: Colors.green,
-                                      shape: BoxShape.circle,
-                                    ),
-                                  ),
-                                  const SizedBox(width: 6),
-                                  Text(
-                                    camionero['estado'] as String,
-                                    style: const TextStyle(
-                                      color: Colors.green,
-                                      fontWeight: FontWeight.w500,
-                                      fontSize: 12,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
+                            const SizedBox(height: AppSpacing.xs),
+                            OperationalStatusChip.tracking(estado),
                           ],
                         ),
                       ),
                     ],
                   ),
-                  
-                  const SizedBox(height: 24),
-                  
-                  // Detalles de ruta
-                  Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.grey[50],
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: Column(
-                      children: [
-                        Row(
-                          children: [
-                            Column(
-                              children: [
-                                const Icon(
-                                  Icons.circle, 
-                                  color: Colors.green,
-                                  size: 14,
-                                ),
-                                Container(
-                                  width: 2,
-                                  height: 30,
-                                  color: Colors.grey[300],
-                                ),
-                                const Icon(
-                                  Icons.location_on,
-                                  color: Colors.red,
-                                  size: 14,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    camionero['origen'] as String,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                  const SizedBox(height: 30),
-                                  Text(
-                                    camionero['destino'] as String,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.w500,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
-                        
-                        const Divider(height: 30),
-                        
-                        // Información adicional
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceAround,
-                          children: [
-                            _buildInfoItem(
-                              Icons.timer, 
-                              camionero['tiempoEstimado'] as String, 
-                              'Tiempo est.'
-                            ),
-                            _buildInfoItem(
-                              Icons.route, 
-                              camionero['distanciaRecorrida'] as String, 
-                              'Recorrido'
-                            ),
-                            _buildInfoItem(
-                              Icons.inventory_2, 
-                              camionero['carga'] as String, 
-                              'Carga'
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
-                  
-                  const SizedBox(height: 16),
-                  
-                  // Información de contacto
+                  const SizedBox(height: AppSpacing.lg),
+                  _routeBlock(camionero),
+                  const Divider(height: AppSpacing.xl),
                   _buildInfoRow('Placa', camionero['placaVehiculo'] as String),
                   _buildInfoRow('Teléfono', camionero['telefono'] as String),
+                  _buildInfoRow('Carga', camionero['carga'] as String),
                   _buildInfoRow(
-                    'Última actualización', 
-                    _formatTimeDifference(camionero['ultimaActualizacion'] as DateTime),
+                    'Última actualización',
+                    _formatTimeDifference(
+                      camionero['ultimaActualizacion'] as DateTime,
+                    ),
                   ),
-                  
-                  const SizedBox(height: 24),
-                  
-                  // Botones de acción
+                  const SizedBox(height: AppSpacing.lg),
                   Row(
                     children: [
                       Expanded(
                         child: OutlinedButton.icon(
                           onPressed: () {
-                            // Centrar mapa en el camionero
-                            _mapController?.animateCamera(
-                              google_maps.CameraUpdate.newLatLngZoom(
-                                camionero['ubicacion'],
-                                16,
-                              ),
-                            );
-                            _siguiendoCamionero = true;
+                            _centerOnCamionero(camionero['id'] as String);
                             Navigator.pop(context);
                           },
                           icon: const Icon(Icons.map),
-                          label: const Text('VER EN MAPA'),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: ElevatedButton.icon(
-                          onPressed: () {
-                            // Simular llamada telefónica
-                            Navigator.pop(context);
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('Llamando al camionero...')),
-                            );
-                          },
-                          icon: const Icon(Icons.phone),
-                          label: const Text('LLAMAR'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Theme.of(context).primaryColor,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
+                          label: const Text('Ver en mapa'),
                         ),
                       ),
                     ],
@@ -520,222 +435,770 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> with TickerProvid
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _routeBlock(Map<String, dynamic> camionero) {
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+      ),
+      child: Column(
         children: [
-          SizedBox(
-            width: 120,
-            child: Text(
-              '$label:',
-              style: TextStyle(
-                color: Colors.grey[700],
-                fontWeight: FontWeight.w500,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SvgPicture.string(
+                operationalCrosshairSvg,
+                width: 16,
+                height: 16,
+                color: AppColors.statusActive,
+                semanticsLabel: 'Origen',
               ),
-            ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(child: Text(camionero['origen'] as String)),
+            ],
           ),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(
-                fontWeight: FontWeight.w400,
+          const SizedBox(height: AppSpacing.md),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SvgPicture.string(
+                operationalAlertSvg,
+                width: 16,
+                height: 16,
+                color: AppColors.mapMarkerDestination,
+                semanticsLabel: 'Destino',
               ),
-            ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(child: Text(camionero['destino'] as String)),
+            ],
           ),
         ],
       ),
     );
   }
 
-  Widget _buildInfoItem(IconData icon, String value, String label) {
+  Widget _buildInfoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: AppSpacing.xxs),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 140,
+            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+          ),
+          Expanded(child: Text(value)),
+        ],
+      ),
+    );
+  }
+
+  String _formatTimeDifference(DateTime timestamp) {
+    final difference = DateTime.now().difference(timestamp);
+    if (difference.inMinutes < 60) return 'Hace ${difference.inMinutes} min';
+    if (difference.inHours < 24) return 'Hace ${difference.inHours} h';
+    return 'Hace ${difference.inDays} días';
+  }
+
+  latlong.LatLng? _fleetCenter() {
+    final visible = _visibleCamioneros.toList();
+    if (visible.isEmpty) return null;
+    var sumLat = 0.0;
+    var sumLng = 0.0;
+    var count = 0;
+    for (final c in visible) {
+      final p = c['ubicacion'] as latlong.LatLng;
+      sumLat += p.latitude;
+      sumLng += p.longitude;
+      count += 1;
+    }
+    if (count == 0) return null;
+    return latlong.LatLng(sumLat / count, sumLng / count);
+  }
+
+  void _fitVisibleFleet() {
+    final points =
+        _visibleCamioneros
+            .map((camionero) => camionero['ubicacion'] as latlong.LatLng)
+            .toList();
+    if (points.isEmpty) {
+      _mapController.move(_defaultCenter, 12);
+      return;
+    }
+    if (points.length == 1) {
+      _mapController.move(points.first, 15);
+      return;
+    }
+
+    final bounds = LatLngBounds.fromPoints(points);
+    _mapController.fitBounds(
+      bounds,
+      options: const FitBoundsOptions(padding: EdgeInsets.all(72), maxZoom: 15),
+    );
+  }
+
+  void _expandFleetCluster(OperationalFleetCluster cluster) {
+    final points = cluster.points.map((point) => point.point).toList();
+    if (points.length < 2) {
+      _mapController.move(
+        cluster.center,
+        (_mapController.zoom + 1.2).clamp(10, 17).toDouble(),
+      );
+      return;
+    }
+    _mapController.fitBounds(
+      LatLngBounds.fromPoints(points),
+      options: const FitBoundsOptions(padding: EdgeInsets.all(88), maxZoom: 16),
+    );
+  }
+
+  List<Marker> _buildMarkers(OperationalFleetRenderPlan plan) {
+    final clusterMarkers = plan.clusters.map((cluster) {
+      return Marker(
+        point: cluster.center,
+        width: 66,
+        height: 66,
+        builder:
+            (ctx) => OperationalFleetClusterMarker(
+              cluster: cluster,
+              onTap: () => _expandFleetCluster(cluster),
+            ),
+      );
+    });
+
+    final truckMarkers = plan.markers.map((fleetPoint) {
+      final camionero = fleetPoint.source;
+      final point = fleetPoint.point;
+      final estado = camionero['estado'] as String;
+      final nombre = camionero['nombre'] as String;
+      final selected = _camioneroSeleccionadoId == camionero['id'];
+      final heading = camionero['rumbo'] as double;
+
+      return Marker(
+        point: point,
+        width: selected ? 52 : 48,
+        height: selected ? 52 : 48,
+        builder:
+            (ctx) => GestureDetector(
+              onTap: () => _mostrarDetallesCamionero(camionero),
+              child: Semantics(
+                button: true,
+                label:
+                    '$nombre, ${AppColors.trackingStatusLabel(estado)}, ${_formatTimeDifference(camionero['ultimaActualizacion'] as DateTime)}',
+                child: FleetMapMarker(
+                  status: estado,
+                  initial: nombre,
+                  heading: heading,
+                  selected: selected,
+                ),
+              ),
+            ),
+      );
+    });
+
+    return [...clusterMarkers, ...truckMarkers];
+  }
+
+  void _toggleStateFilter(String status) {
+    setState(() {
+      if (_visibleStates.contains(status)) {
+        if (_visibleStates.length == 1) return;
+        _visibleStates.remove(status);
+      } else {
+        _visibleStates.add(status);
+      }
+      if (_selectedCamionero != null &&
+          !_visibleStates.contains(_selectedCamionero!['estado'] as String)) {
+        _camioneroSeleccionadoId = null;
+      }
+    });
+  }
+
+  void _handleMapPositionChanged(MapPosition position, bool hasGesture) {
+    final nextCenter = position.center;
+    final nextZoom = position.zoom;
+    if (nextCenter == null && nextZoom == null) return;
+
+    final now = DateTime.now();
+    final center = nextCenter ?? _mapCenter;
+    final zoom = nextZoom ?? _mapZoom;
+    final movedMeters = const latlong.Distance().as(
+      latlong.LengthUnit.Meter,
+      _mapCenter,
+      center,
+    );
+    final shouldRefreshPlan =
+        _lastViewportUpdateAt == null ||
+        now.difference(_lastViewportUpdateAt!).inMilliseconds >= 160 ||
+        movedMeters >= 90 ||
+        (zoom - _mapZoom).abs() >= 0.25;
+
+    if (!shouldRefreshPlan && !(hasGesture && _followSelectedVehicle)) return;
+
+    setState(() {
+      _mapCenter = center;
+      _mapZoom = zoom;
+      _lastViewportUpdateAt = now;
+      if (hasGesture && _followSelectedVehicle) {
+        _followSelectedVehicle = false;
+      }
+    });
+  }
+
+  Widget _buildFleetSummaryCard() {
+    return Material(
+      elevation: 8,
+      shadowColor: Colors.black.withValues(alpha: 0.18),
+      borderRadius: BorderRadius.circular(22),
+      color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
+      child: Container(
+        width: 248,
+        padding: const EdgeInsets.all(AppSpacing.md),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(22),
+          border: Border.all(
+            color: Theme.of(context).dividerColor.withValues(alpha: 0.12),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Flota operativa',
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                if (_backgroundRefreshing)
+                  const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              _fleetTotal == 0
+                  ? 'Esperando sincronización'
+                  : '$_fleetTotal vehículos vinculados',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            Row(
+              children: [
+                _summaryMetric('Activos', _activeCount, AppColors.statusActive),
+                _summaryMetric('Antigua', _staleCount, AppColors.statusStale),
+                _summaryMetric(
+                  'Sin señal',
+                  _offlineCount,
+                  AppColors.statusOffline,
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              'Viajes activos: $_activeTripCount · Sin ubicación: $_noLocationCount',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _summaryMetric(String label, int value, Color color) {
+    return Expanded(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            value.toString(),
+            style: Theme.of(context).textTheme.titleLarge?.copyWith(
+              color: color,
+              fontWeight: FontWeight.w800,
+              height: 1,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xxs),
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOperationalFilters() {
+    return Material(
+      elevation: 6,
+      shadowColor: Colors.black.withValues(alpha: 0.16),
+      borderRadius: BorderRadius.circular(999),
+      color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.xxs),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _filterChip('active', 'Activos', AppColors.statusActive),
+            _filterChip('stale', 'Antigua', AppColors.statusStale),
+            _filterChip('offline', 'Sin señal', AppColors.statusOffline),
+            _booleanFilterChip(
+              selected: _activeTripsOnly,
+              label: 'En viaje',
+              color: AppColors.deepGreen,
+              onTap: () {
+                setState(() {
+                  _activeTripsOnly = !_activeTripsOnly;
+                  if (_selectedCamionero != null &&
+                      _activeTripsOnly &&
+                      _selectedCamionero!['hasActiveTrip'] != true) {
+                    _camioneroSeleccionadoId = null;
+                  }
+                });
+              },
+            ),
+            _booleanFilterChip(
+              selected: _showFleetDensity,
+              label: 'Densidad',
+              color: AppColors.statusSyncing,
+              onTap:
+                  () => setState(() => _showFleetDensity = !_showFleetDensity),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _booleanFilterChip({
+    required bool selected,
+    required String label,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(999),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.sm,
+            vertical: AppSpacing.xs,
+          ),
+          decoration: BoxDecoration(
+            color:
+                selected ? color.withValues(alpha: 0.14) : Colors.transparent,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color:
+                  selected
+                      ? color
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _filterChip(String status, String label, Color color) {
+    final selected = _visibleStates.contains(status);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: InkWell(
+        onTap: () => _toggleStateFilter(status),
+        borderRadius: BorderRadius.circular(999),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.sm,
+            vertical: AppSpacing.xs,
+          ),
+          decoration: BoxDecoration(
+            color:
+                selected ? color.withValues(alpha: 0.14) : Colors.transparent,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 8,
+                height: 8,
+                decoration: BoxDecoration(
+                  color: selected ? color : color.withValues(alpha: 0.34),
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                label,
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color:
+                      selected
+                          ? color
+                          : Theme.of(context).colorScheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRealtimeOverlay() {
+    return Material(
+      elevation: 6,
+      shadowColor: Colors.black.withValues(alpha: 0.16),
+      borderRadius: BorderRadius.circular(AppSpacing.chipRadius),
+      color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.xs,
+          vertical: AppSpacing.xxs,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            RealtimeConnectionChip(status: _realtimeStatus),
+            IconButton(
+              visualDensity: VisualDensity.compact,
+              onPressed: () => _loadFleet(initial: false),
+              icon:
+                  _backgroundRefreshing
+                      ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                      : SvgPicture.string(
+                        operationalRefreshSvg,
+                        width: 20,
+                        height: 20,
+                        color: Theme.of(context).colorScheme.onSurface,
+                        semanticsLabel: 'Actualizar flota',
+                      ),
+              tooltip: 'Actualizar flota',
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSelectedTruckSheet(Map<String, dynamic> camionero) {
+    final estado = camionero['estado'] as String;
+    final updatedAt = camionero['ultimaActualizacion'] as DateTime;
+
+    return AnimatedSlide(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      offset: Offset.zero,
+      child: Material(
+        elevation: 14,
+        shadowColor: Colors.black.withValues(alpha: 0.24),
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(AppSpacing.sheetRadius),
+        ),
+        color: Theme.of(context).colorScheme.surface,
+        child: SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.lg,
+              AppSpacing.sm,
+              AppSpacing.lg,
+              AppSpacing.lg,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Center(
+                  child: Container(
+                    width: 42,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context).dividerColor,
+                      borderRadius: BorderRadius.circular(999),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Row(
+                  children: [
+                    FleetMapMarker(
+                      status: estado,
+                      initial: camionero['nombre'] as String,
+                      heading: camionero['rumbo'] as double,
+                      selected: true,
+                      size: 46,
+                    ),
+                    const SizedBox(width: AppSpacing.md),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            camionero['nombre'] as String,
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(fontWeight: FontWeight.w800),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          const SizedBox(height: AppSpacing.xxs),
+                          Text(
+                            'Última actualización ${_formatTimeDifference(updatedAt).toLowerCase()}',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ],
+                      ),
+                    ),
+                    IconButton(
+                      onPressed:
+                          () => setState(() => _camioneroSeleccionadoId = null),
+                      icon: const Icon(Icons.close),
+                      tooltip: 'Cerrar detalle',
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Wrap(
+                  spacing: AppSpacing.xs,
+                  runSpacing: AppSpacing.xs,
+                  children: [
+                    OperationalStatusChip.tracking(estado, compact: true),
+                    RealtimeConnectionChip(status: _realtimeStatus),
+                    OperationalStatusChip(
+                      label:
+                          (camionero['hasActiveTrip'] as bool)
+                              ? 'Viaje activo'
+                              : 'Sin viaje activo',
+                      color:
+                          (camionero['hasActiveTrip'] as bool)
+                              ? AppColors.deepGreen
+                              : AppColors.graphite700,
+                      icon: Icons.route,
+                      compact: true,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.md),
+                _routeBlock(camionero),
+                const SizedBox(height: AppSpacing.md),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _compactInfo(
+                        'Placa',
+                        camionero['placaVehiculo'] as String,
+                      ),
+                    ),
+                    Expanded(
+                      child: _compactInfo(
+                        'Carga',
+                        camionero['carga'] as String,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.md),
+                SizedBox(
+                  width: double.infinity,
+                  child: FilledButton.icon(
+                    onPressed: () => _mostrarDetallesCamionero(camionero),
+                    icon: const Icon(Icons.open_in_full),
+                    label: const Text('Ver detalle operativo'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _compactInfo(String label, String value) {
     return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, color: Theme.of(context).primaryColor),
-        const SizedBox(height: 4),
+        Text(label, style: Theme.of(context).textTheme.labelSmall),
+        const SizedBox(height: AppSpacing.xxs),
         Text(
           value,
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 14,
-          ),
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
+          maxLines: 1,
           overflow: TextOverflow.ellipsis,
-        ),
-        Text(
-          label,
-          style: TextStyle(
-            color: Colors.grey[600],
-            fontSize: 12,
-          ),
         ),
       ],
     );
   }
 
-  String _formatTimeDifference(DateTime timestamp) {
-    final now = DateTime.now();
-    final difference = now.difference(timestamp);
-    
-    if (difference.inMinutes < 60) {
-      return 'Hace ${difference.inMinutes} min';
-    } else if (difference.inHours < 24) {
-      return 'Hace ${difference.inHours} h';
-    } else {
-      return 'Hace ${difference.inDays} días';
-    }
-  }
-
-  void _toggleBottomSheet() {
-    setState(() {
-      _isBottomSheetExpanded = !_isBottomSheetExpanded;
-    });
-    
-    if (_isBottomSheetExpanded) {
-      _animationController.forward();
-    } else {
-      _animationController.reverse();
-    }
-  }
-  
-  void _toggleSeguimientoCamionero() {
-    setState(() {
-      _siguiendoCamionero = !_siguiendoCamionero;
-    });
-  }
-
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Seguimiento de Camioneros'),
-      ),
-      body: Stack(
-        children: [
-          FlutterMap(
-            options: MapOptions(
-              center: latlong.LatLng(1.2136, -77.2811),
-              zoom: 12.0,
-            ),
-            children: [
-              TileLayer(
-                urlTemplate: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-                subdomains: const ['a', 'b', 'c'],
-              ),
-              MarkerLayer(
-                markers: [
-                  // Crear marcadores para cada camionero en la lista _camioneros
-                  ..._camioneros.values.map((camionero) => Marker(
-                    width: 40.0,
-                    height: 40.0,
-                    point: latlong.LatLng(
-                      (camionero['ubicacion'] as google_maps.LatLng).latitude,
-                      (camionero['ubicacion'] as google_maps.LatLng).longitude,
-                    ),
-                    builder: (ctx) => Stack(
-                      children: [
-                        const Icon(
-                          Icons.location_on,
-                          color: Colors.red,
-                          size: 40,
-                        ),
-                        Positioned(
-                          right: 0,
-                          child: Container(
-                            padding: const EdgeInsets.all(2),
-                            decoration: BoxDecoration(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(10),
-                            ),
-                            child: Text(
-                              camionero['nombre'].toString().substring(0, 1),
-                              style: Theme.of(context).textTheme.titleLarge,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  )),
-                  // Marcador para centro de referencia
-                  Marker(
-                    width: 40.0,
-                    height: 40.0,
-                    point: latlong.LatLng(1.2136, -77.2811),
-                    builder: (ctx) => const Icon(Icons.location_on, color: Colors.blue),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          if (_isLoading)
-            const Center(
-              child: CircularProgressIndicator(),
-            ),
-          if (_errorMessage.isNotEmpty)
-            Center(
-              child: Container(
-                padding: const EdgeInsets.all(16),
-                margin: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  color: Colors.red.withOpacity(0.8),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(
-                  _errorMessage,
-                  style: const TextStyle(color: Colors.white),
-                  textAlign: TextAlign.center,
-                ),
-              ),
-            ),
-        ],
-      ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          // Centrar mapa en los camioneros disponibles
-          if (_markers.isNotEmpty) {
-            final bounds = _calculateBounds();
-            try {
-              _mapController?.animateCamera(
-                google_maps.CameraUpdate.newLatLngBounds(bounds, 50),
-              );
-            } catch (e) {
-              debugPrint('Error al centrar mapa: $e');
-              // Centrar en una posición fija como fallback
-              _mapController?.animateCamera(
-                google_maps.CameraUpdate.newLatLngZoom(
-                  google_maps.LatLng(1.2136, -77.2811),
-                  12,
-                ),
-              );
-            }
-          }
-        },
-        child: const Icon(Icons.center_focus_strong),
-      ),
+    final selectedCamionero = _selectedCamionero;
+    final fleetPlan = OperationalMapIntelligence.buildFleetPlan(
+      camioneros:
+          _activeTripsOnly
+              ? _camioneros.values.where(
+                (camionero) => camionero['hasActiveTrip'] == true,
+              )
+              : _camioneros.values,
+      mapCenter: _mapCenter,
+      zoom: _mapZoom,
+      visibleStates: _visibleStates,
+      selectedId: _camioneroSeleccionadoId,
     );
-  }
+    _mapDiagnostics.recordFleetPlan(fleetPlan);
 
-  // Calcular los límites para mostrar todos los marcadores en el mapa
-  google_maps.LatLngBounds _calculateBounds() {
-    double minLat = 90;
-    double maxLat = -90;
-    double minLng = 180;
-    double maxLng = -180;
-    
-    for (final marker in _markers) {
-      final position = marker.position;
-      
-      if (position.latitude < minLat) minLat = position.latitude;
-      if (position.latitude > maxLat) maxLat = position.latitude;
-      if (position.longitude < minLng) minLng = position.longitude;
-      if (position.longitude > maxLng) maxLng = position.longitude;
-    }
-    
-    return google_maps.LatLngBounds(
-      southwest: google_maps.LatLng(minLat, minLng),
-      northeast: google_maps.LatLng(maxLat, maxLng),
+    return Stack(
+      children: [
+        FlutterMap(
+          mapController: _mapController,
+          options: MapOptions(
+            center: _defaultCenter,
+            zoom: 12,
+            onPositionChanged: _handleMapPositionChanged,
+          ),
+          children: [
+            TileLayer(
+              urlTemplate: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              subdomains: const ['a', 'b', 'c'],
+            ),
+            OperationalDensityCircleLayer(
+              cells: fleetPlan.densityCells,
+              color: AppColors.deepGreen,
+              visible: _showFleetDensity,
+            ),
+            MarkerLayer(markers: _buildMarkers(fleetPlan)),
+          ],
+        ),
+        Positioned(
+          left: AppSpacing.md,
+          top: AppSpacing.md,
+          child: _buildFleetSummaryCard(),
+        ),
+        Positioned(
+          right: AppSpacing.md,
+          top: AppSpacing.md,
+          child: _buildRealtimeOverlay(),
+        ),
+        Positioned(
+          left: AppSpacing.md,
+          top: 168,
+          child: _buildOperationalFilters(),
+        ),
+        if (_initialLoading)
+          const OperationalLoadingPanel(message: 'Cargando flota...'),
+        if (!_initialLoading && _errorMessage.isNotEmpty)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.lg),
+              child: Material(
+                elevation: 4,
+                borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+                child: OperationalErrorState(
+                  message:
+                      'No se pudo sincronizar la flota. Revisa la conexión e inténtalo de nuevo.',
+                  onRetry: () => _loadFleet(initial: true),
+                ),
+              ),
+            ),
+          ),
+        if (!_initialLoading &&
+            _errorMessage.isEmpty &&
+            _emptyMessage.isNotEmpty)
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(AppSpacing.lg),
+              child: Material(
+                elevation: 2,
+                borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+                child: OperationalEmptyState(
+                  icon: Icons.local_shipping_outlined,
+                  title: 'Sin vehículos activos en este momento',
+                  message: _emptyMessage,
+                  actionLabel: 'Reintentar sincronización',
+                  onAction: () => _loadFleet(initial: true),
+                ),
+              ),
+            ),
+          ),
+        Positioned(
+          right: AppSpacing.md,
+          bottom: selectedCamionero == null ? AppSpacing.xxl : 292,
+          child: MapControlCluster(
+            onZoomIn:
+                () => _mapController.move(
+                  _mapController.center,
+                  _mapController.zoom + 1,
+                ),
+            onZoomOut:
+                () => _mapController.move(
+                  _mapController.center,
+                  _mapController.zoom - 1,
+                ),
+            onRecenter: () {
+              final selected = _selectedCamionero;
+              if (selected != null) {
+                setState(() => _followSelectedVehicle = true);
+                _centerOnCamionero(selected['id'] as String);
+                return;
+              }
+
+              final center = _fleetCenter();
+              _mapController.move(
+                center ?? _defaultCenter,
+                center == null ? 12 : 11,
+              );
+            },
+            onFitFleet: _fitVisibleFleet,
+            onFilter: () {
+              setState(() {
+                if (_visibleStates.length == 3) {
+                  _visibleStates
+                    ..clear()
+                    ..add('active');
+                } else {
+                  _visibleStates
+                    ..clear()
+                    ..addAll({'active', 'stale', 'offline'});
+                }
+              });
+            },
+            filterActive: _visibleStates.length != 3,
+          ),
+        ),
+        if (selectedCamionero != null)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: _buildSelectedTruckSheet(selectedCamionero),
+          ),
+      ],
     );
   }
-} 
+}

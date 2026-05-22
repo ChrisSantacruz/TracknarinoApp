@@ -95,11 +95,6 @@ const userSchema = new mongoose.Schema({
     default: false,
     required: function() { return this.tipoUsuario === 'contratista'; }
   },
-  disponibleParaSolicitarCamioneros: {
-    type: Boolean,
-    default: true,
-    required: function() { return this.tipoUsuario === 'contratista'; }
-  },
   created_at: {
     type: Date,
     default: Date.now
@@ -108,6 +103,25 @@ const userSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   }
+}, {
+  toJSON: {
+    transform: (doc, ret) => {
+      delete ret.contraseña;
+      delete ret.__v;
+      return ret;
+    }
+  },
+  toObject: {
+    transform: (doc, ret) => {
+      delete ret.contraseña;
+      delete ret.__v;
+      return ret;
+    }
+  }
 });
+
+userSchema.index({ tipoUsuario: 1, estadoAprobacion: 1 });
+userSchema.index({ camionerosAfiliados: 1 });
+userSchema.index({ 'camion.placa': 1 }, { sparse: true });
 
 module.exports = mongoose.model('User', userSchema);

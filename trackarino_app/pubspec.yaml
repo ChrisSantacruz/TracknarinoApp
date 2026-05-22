@@ -50,6 +50,12 @@ dependencies:
   firebase_core: ^2.25.4
   flutter_svg: ^1.1.6
   url_launcher: ^6.3.1
+  socket_io_client: ^3.0.2
+  drift: ^2.19.1+1
+  drift_flutter: ^0.2.0
+  path_provider: ^2.1.5
+  connectivity_plus: ^7.1.1
+  path: ^1.9.1
 
 dev_dependencies:
   flutter_test:
@@ -61,6 +67,8 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^5.0.0
+  drift_dev: ^2.19.1
+  build_runner: ^2.4.13
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

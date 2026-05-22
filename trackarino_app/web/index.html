@@ -31,6 +31,12 @@
 
   <title>trackarino_app</title>
   <link rel="manifest" href="manifest.json">
+  <script src="https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/sql-wasm.js"></script>
+  <script>
+    window.driftSqlJsInit = initSqlJs({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/sql.js@1.10.3/dist/${file}`,
+    });
+  </script>
 </head>
 <body>
   <script src="flutter_bootstrap.js" async></script>

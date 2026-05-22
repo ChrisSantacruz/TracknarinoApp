@@ -1,41 +1,28 @@
 const express = require('express');
 const router = express.Router();
 const { obtenerRutaORS } = require('../services/orsService');
+const verificarToken = require('../middleware/authMiddleware');
+const asyncHandler = require('../middleware/asyncHandler');
+const { validateCoordinatePair } = require('../middleware/validateRequest');
 
-// POST /api/ors/ruta - Endpoint público (no requiere autenticación)
-router.post('/ruta', async (req, res) => {
-  try {
+// POST /api/ors/ruta - Protegido para evitar abuso del proxy de rutas
+router.post(
+  '/ruta',
+  verificarToken,
+  validateCoordinatePair('origen'),
+  validateCoordinatePair('destino'),
+  asyncHandler(async (req, res) => {
     const { origen, destino } = req.body;
+    const correlationId = req.headers['x-correlation-id'] || req.body.correlationId;
 
-    console.log('📍 POST /api/ors/ruta recibido');
-    console.log('   - Origen:', origen);
-    console.log('   - Destino:', destino);
-
-    // origen y destino deben ser arrays: [longitud, latitud]
-    if (!Array.isArray(origen) || origen.length !== 2) {
-      console.log('❌ Origen inválido');
-      return res.status(400).json({ error: 'origen debe ser un array [lng, lat]' });
-    }
-
-    if (!Array.isArray(destino) || destino.length !== 2) {
-      console.log('❌ Destino inválido');
-      return res.status(400).json({ error: 'destino debe ser un array [lng, lat]' });
-    }
-
-    console.log('✅ Parámetros válidos, calculando ruta...');
-    const resultado = await obtenerRutaORS(origen, destino);
+    const resultado = await obtenerRutaORS(origen, destino, { correlationId });
 
     if (resultado.error) {
-      console.log('❌ Error al calcular ruta:', resultado.error);
-      return res.status(500).json({ error: resultado.error });
+      return res.status(502).json({ error: resultado.error, provider: resultado.provider, correlationId: resultado.correlationId });
     }
 
-    console.log(`✅ Ruta calculada exitosamente: ${resultado.coordinates?.length || 0} puntos`);
     res.json(resultado);
-  } catch (error) {
-    console.error('❌ Error en /api/ors/ruta:', error);
-    res.status(500).json({ error: error.message });
-  }
-});
+  })
+);
 
 module.exports = router;

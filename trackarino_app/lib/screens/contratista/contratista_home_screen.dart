@@ -1,19 +1,27 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
+import '../../models/fleet_tracking_item.dart';
 import '../../models/user_model.dart';
-import '../../models/oportunidad_model.dart';
 import '../../services/auth_service.dart';
-import '../../services/oportunidad_service.dart';
+import '../../services/location_service.dart';
+import '../../state/session_bootstrap.dart';
+import '../../services/contratista_tracking_service.dart';
+import '../../theme/app_colors.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/operational/operational_card.dart';
+import '../../widgets/operational/operational_empty_state.dart';
+import '../../widgets/operational/operational_error_state.dart';
+import '../../widgets/operational/operational_skeleton.dart';
+import '../../widgets/operational/operational_status_chip.dart';
+import '../../widgets/operational/operational_svg_icon.dart';
 import 'crear_oportunidad_screen.dart';
 import 'seguimiento_screen.dart';
 
 class ContratistaHomeScreen extends StatefulWidget {
   final User usuario;
 
-  const ContratistaHomeScreen({
-    super.key,
-    required this.usuario,
-  });
+  const ContratistaHomeScreen({super.key, required this.usuario});
 
   @override
   State<ContratistaHomeScreen> createState() => _ContratistaHomeScreenState();
@@ -21,232 +29,323 @@ class ContratistaHomeScreen extends StatefulWidget {
 
 class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
   int _selectedIndex = 0;
-  List<Oportunidad> _misOportunidades = [];
-  bool _isLoading = false;
+  bool _fleetLoading = true;
+  String? _fleetError;
+  List<FleetTrackingItem> _fleet = [];
 
   @override
   void initState() {
     super.initState();
-    _cargarOportunidades();
+    _loadFleetSummary();
   }
 
-  // Cargar oportunidades creadas por este contratista
-  Future<void> _cargarOportunidades() async {
+  Future<void> _loadFleetSummary() async {
     setState(() {
-      _isLoading = true;
+      _fleetLoading = true;
+      _fleetError = null;
     });
-
     try {
-      // Esta es una función que necesitarías implementar en oportunidadService
-      // _misOportunidades = await OportunidadService.obtenerOportunidadesPorContratista(widget.usuario.id!);
-      
-      // Por ahora, usaremos un placeholder
-      _misOportunidades = [];
-    } catch (e) {
-      print('Error al cargar oportunidades: $e');
-    } finally {
+      final fleet = await ContratistaTrackingService.fetchFleet();
+      if (!mounted) return;
       setState(() {
-        _isLoading = false;
+        _fleet = fleet;
+        _fleetLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _fleetError = 'No se pudo cargar el estado de flota: $e';
+        _fleetLoading = false;
       });
     }
   }
 
+  int get _activeCount =>
+      _fleet.where((f) => f.hasLocation && !f.isOffline && !f.isStale).length;
+  int get _staleCount => _fleet.where((f) => f.isStale).length;
+  int get _offlineCount => _fleet.where((f) => f.isOffline).length;
+  int get _noLocationCount =>
+      _fleet.where((f) => !f.hasLocation || !f.coordinatesValid).length;
+
+  Future<void> _logout() async {
+    final auth = Provider.of<AuthService>(context, listen: false);
+    final location = Provider.of<LocationService>(context, listen: false);
+    await SessionBootstrap.teardownSession(location: location);
+    await auth.logout();
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Páginas del menú inferior
-    final List<Widget> pages = [
-      _buildHomePage(), // Dashboard principal
-      const CrearOportunidadScreen(), // Crear nueva oportunidad
-      const SeguimientoScreen(),
-      _buildPerfilContratista(),
-    ];
-
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Tracknariño - Contratista'),
+        title: Text(
+          _titleForIndex(_selectedIndex),
+          style: Theme.of(context).textTheme.titleLarge,
+        ),
         actions: [
+          if (_selectedIndex == 0)
+            IconButton(
+              onPressed: _loadFleetSummary,
+              icon: OperationalSvgIcon(
+                OperationalSvgIcons.refreshCw,
+                color: Theme.of(context).colorScheme.onSurface,
+              ),
+              tooltip: 'Actualizar operaciones',
+            ),
           IconButton(
-            onPressed: () async {
-              await Provider.of<AuthService>(context, listen: false).logout();
-            },
-            icon: const Icon(Icons.logout),
+            onPressed: _logout,
+            icon: OperationalSvgIcon(
+              OperationalSvgIcons.logOut,
+              color: Theme.of(context).colorScheme.onSurface,
+            ),
             tooltip: 'Cerrar sesión',
           ),
         ],
       ),
-      body: pages[_selectedIndex],
-      bottomNavigationBar: BottomNavigationBar(
-        type: BottomNavigationBarType.fixed,
-        currentIndex: _selectedIndex,
-        onTap: (index) {
-          setState(() {
-            _selectedIndex = index;
-          });
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: [
+          _buildHomePage(),
+          const CrearOportunidadScreen(embedded: true),
+          const SeguimientoScreen(),
+          _buildPerfilContratista(),
+        ],
+      ),
+      bottomNavigationBar: NavigationBar(
+        selectedIndex: _selectedIndex,
+        onDestinationSelected: (index) {
+          setState(() => _selectedIndex = index);
         },
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.dashboard),
-            label: 'Inicio',
+        destinations: const [
+          NavigationDestination(
+            icon: Icon(Icons.dashboard_outlined),
+            selectedIcon: Icon(Icons.dashboard),
+            label: 'Operaciones',
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.add_circle),
-            label: 'Crear',
+          NavigationDestination(
+            icon: Icon(Icons.add_circle_outline),
+            selectedIcon: Icon(Icons.add_circle),
+            label: 'Crear viaje',
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.location_on),
-            label: 'Seguimiento',
+          NavigationDestination(
+            icon: Icon(Icons.map_outlined),
+            selectedIcon: Icon(Icons.map),
+            label: 'Flota',
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person),
+          NavigationDestination(
+            icon: Icon(Icons.person_outline),
+            selectedIcon: Icon(Icons.person),
             label: 'Perfil',
           ),
         ],
       ),
-      floatingActionButton: _selectedIndex == 0 
-          ? FloatingActionButton(
-              onPressed: () {
-                setState(() {
-                  _selectedIndex = 1; // Ir a la pestaña de crear oportunidad
-                });
-              },
-              tooltip: 'Crear nueva oportunidad',
-              child: const Icon(Icons.add),
-            )
-          : null,
+      floatingActionButton:
+          _selectedIndex == 0
+              ? FloatingActionButton.extended(
+                onPressed: () => setState(() => _selectedIndex = 2),
+                icon: const OperationalSvgIcon(
+                  OperationalSvgIcons.route,
+                  color: Colors.white,
+                ),
+                label: const Text('Ver flota en mapa'),
+              )
+              : null,
     );
   }
 
-  // Construir la página principal con las tarjetas de información
+  String _titleForIndex(int index) {
+    switch (index) {
+      case 1:
+        return 'Nueva oportunidad';
+      case 2:
+        return 'Seguimiento de flota';
+      case 3:
+        return 'Perfil';
+      default:
+        return 'Panel operativo';
+    }
+  }
+
   Widget _buildHomePage() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+    return RefreshIndicator(
+      onRefresh: _loadFleetSummary,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Hola, ${widget.usuario.nombre}',
+              style: Theme.of(context).textTheme.headlineMedium,
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              widget.usuario.empresa ?? 'Contratista',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: AppSpacing.xl),
+            Text(
+              'Estado de flota',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            if (_fleetLoading)
+              const OperationalCard(
+                child: Column(
+                  children: [
+                    OperationalSkeleton(height: 14, width: double.infinity),
+                    SizedBox(height: AppSpacing.sm),
+                    OperationalSkeleton(height: 14, width: 200),
+                  ],
+                ),
+              )
+            else if (_fleetError != null)
+              OperationalCard(
+                child: OperationalErrorState(
+                  message: _fleetError!,
+                  onRetry: _loadFleetSummary,
+                ),
+              )
+            else
+              _buildFleetSummaryCard(),
+            const SizedBox(height: AppSpacing.lg),
+            OperationalCard(
+              onTap: () => setState(() => _selectedIndex = 1),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.add_road,
+                        color: Theme.of(context).colorScheme.primary,
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Text(
+                        'Publicar carga',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  Text(
+                    'Crea una oportunidad con origen, destino y precio reales.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: FilledButton.tonal(
+                      onPressed: () => setState(() => _selectedIndex = 1),
+                      child: const Text('Crear oportunidad'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFleetSummaryCard() {
+    if (_fleet.isEmpty) {
+      return OperationalCard(
+        child: OperationalEmptyState(
+          icon: Icons.local_shipping_outlined,
+          title: 'Sin camioneros con ubicación',
+          message:
+              'Cuando un camionero afiliado envíe GPS válido, aparecerá en el mapa de seguimiento.',
+          actionLabel: 'Abrir mapa de flota',
+          onAction: () => setState(() => _selectedIndex = 2),
+        ),
+      );
+    }
+
+    return OperationalCard(
+      onTap: () => setState(() => _selectedIndex = 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Saludo al usuario
-          Text(
-            '¡Hola, ${widget.usuario.nombre}!',
-            style: const TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          
-          const SizedBox(height: 8),
-          
-          Text(
-            'Empresa: ${widget.usuario.empresa}',
-            style: const TextStyle(
-              fontSize: 16,
-              color: Colors.grey,
-            ),
-          ),
-          
-          const SizedBox(height: 24),
-          
-          // Resumen de oportunidades - tarjeta
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Mis Oportunidades',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  if (_isLoading)
-                    const Center(child: CircularProgressIndicator())
-                  else if (_misOportunidades.isEmpty)
-                    const Center(
-                      child: Text('No has creado oportunidades aún.'),
-                    )
-                  else
-                    Column(
-                      children: _misOportunidades.map((oportunidad) {
-                        return ListTile(
-                          title: Text(oportunidad.titulo),
-                          subtitle: Text(
-                            'De ${oportunidad.origen} a ${oportunidad.destino} - ${oportunidad.estado}',
-                          ),
-                          trailing: const Icon(Icons.chevron_right),
-                          onTap: () {
-                            // Implementar navegación a detalle
-                          },
-                        );
-                      }).toList(),
-                    ),
-                  
-                  const SizedBox(height: 16),
-                  
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        _selectedIndex = 1; // Ir a la pestaña de crear oportunidad
-                      });
-                    },
-                    icon: const Icon(Icons.add),
-                    label: const Text('Crear nueva oportunidad'),
-                  ),
-                ],
+          Row(
+            children: [
+              Text(
+                '${_fleet.length} camionero(s) en flota',
+                style: Theme.of(context).textTheme.titleMedium,
               ),
-            ),
+              const Spacer(),
+              const Icon(Icons.chevron_right),
+            ],
           ),
-          
-          const SizedBox(height: 16),
-          
-          // Camioneros asignados - tarjeta
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text(
-                    'Seguimiento de camioneros',
-                    style: TextStyle(
-                      fontSize: 18,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  const Center(
-                    child: Text('Sin camioneros en ruta actualmente.'),
-                  ),
-                  const SizedBox(height: 16),
-                  OutlinedButton.icon(
-                    onPressed: () {
-                      setState(() {
-                        _selectedIndex = 2; // Ir a la pestaña de seguimiento
-                      });
-                    },
-                    icon: const Icon(Icons.map),
-                    label: const Text('Ver mapa de seguimiento'),
-                  ),
-                ],
-              ),
-            ),
+          const SizedBox(height: AppSpacing.md),
+          Wrap(
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.sm,
+            children: [
+              _summaryChip('Activos', _activeCount, AppColors.statusActive),
+              _summaryChip('Señal antigua', _staleCount, AppColors.statusStale),
+              _summaryChip('Sin señal', _offlineCount, AppColors.statusOffline),
+              if (_noLocationCount > 0)
+                _summaryChip(
+                  'Sin ubicación',
+                  _noLocationCount,
+                  AppColors.graphite700,
+                ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Text(
+            'Datos desde API de flota en tiempo real. Sin métricas estimadas.',
+            style: Theme.of(context).textTheme.bodySmall,
           ),
         ],
       ),
     );
   }
 
-  // Método para construir el perfil del contratista
+  Widget _summaryChip(String label, int count, Color color) {
+    return OperationalStatusChip(
+      label: '$label: $count',
+      color: color,
+      compact: true,
+    );
+  }
+
   Widget _buildPerfilContratista() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      child: OperationalCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Perfil', style: Theme.of(context).textTheme.titleLarge),
+            const SizedBox(height: AppSpacing.lg),
+            _profileRow('Nombre', widget.usuario.nombre),
+            _profileRow('Empresa', widget.usuario.empresa ?? '—'),
+            _profileRow('Correo', widget.usuario.correo),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _profileRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: AppSpacing.md),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('Nombre: ${widget.usuario.nombre}'),
-          Text('Empresa: ${widget.usuario.empresa}'),
-          // Agregar más detalles del perfil aquí
+          SizedBox(
+            width: 100,
+            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+          ),
+          Expanded(
+            child: Text(value, style: Theme.of(context).textTheme.bodyMedium),
+          ),
         ],
       ),
     );
   }
-} 
+}

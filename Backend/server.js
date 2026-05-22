@@ -1,7 +1,19 @@
 const express = require('express');
+const http = require('http');
 const mongoose = require('mongoose');
 const cors = require('cors');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config();
+const { notFound, errorHandler } = require('./middleware/errorMiddleware');
+const { initializeRealtime, shutdownRealtime } = require('./services/realtimeService');
+const operationalLogger = require('./utils/operationalLogger');
+const {
+  assertOperationalEnvironment,
+  validateOperationalEnvironment,
+} = require('./config/operationalConfig');
+
+const startupReadiness = assertOperationalEnvironment();
 
 // 📦 Rutas principales
 const authRoutes = require('./routes/authRoutes');
@@ -16,21 +28,17 @@ const calificacionRoutes = require('./routes/calificacionRoutes'); // Rutas de c
 const vehiculoRoutes = require('./routes/vehiculoRoutes');
 const contratistaRoutes = require('./routes/contratistaRoutes');
 const userRoutes = require('./routes/userRoutes');
-
-// 🔐 Middleware personalizados
-const verificarToken = require('./middleware/authMiddleware');
-const { soloRol } = require('./middleware/rolMiddleware');
-
-// 🚀 Servicios adicionales
-const { obtenerRutaORS } = require('./services/orsService');
-const { enviarNotificacionFCM } = require('./services/fcmService'); 
+const operationalRouteRoutes = require('./routes/operationalRouteRoutes');
+const operationalDiagnosticsRoutes = require('./routes/operationalDiagnosticsRoutes');
 
 // Inicializar app
 const app = express();
 
 // 🛡️ Middlewares globales
+app.use(helmet());
+
 // Configuración mejorada de CORS
-app.use(cors({
+const corsOptions = {
   origin: function(origin, callback) {
     const allowedOrigins = [
       'http://localhost:3000',
@@ -60,17 +68,58 @@ app.use(cors({
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
-}));
+};
 
-// Aumentar límite de peso de los JSON
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
+app.use(cors(corsOptions));
+
+const generalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    mensaje: 'Demasiados intentos. Intenta nuevamente más tarde.',
+    error: 'Demasiados intentos. Intenta nuevamente más tarde.',
+    code: 'RATE_LIMITED',
+  },
+});
+
+const sensitiveRouteLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 60,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: {
+    success: false,
+    mensaje: 'Demasiadas solicitudes. Intenta nuevamente más tarde.',
+    error: 'Demasiadas solicitudes. Intenta nuevamente más tarde.',
+    code: 'RATE_LIMITED',
+  },
+});
+
+app.use('/api', generalLimiter);
+app.use(['/api/auth/login', '/api/auth/register', '/api/auth/registro'], authLimiter);
+app.use(['/api/ors/ruta', '/api/alertas', '/api/ubicacion', '/api/contratistas/tracking', '/api/routing', '/api/operations'], sensitiveRouteLimiter);
+
+// Mantener los payloads acotados; las imágenes deben subirse por un flujo dedicado.
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
 // Logger middleware para desarrollo
-app.use((req, res, next) => {
-  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
-  next();
-});
+if (process.env.NODE_ENV === 'development') {
+  app.use((req, res, next) => {
+    console.log(`${new Date().toISOString()} - ${req.method} ${req.originalUrl}`);
+    next();
+  });
+}
 
 // 🔗 Montar rutas
 app.use('/api/auth', authRoutes);
@@ -85,33 +134,79 @@ app.use('/api/calificaciones', calificacionRoutes); // Rutas de calificaciones
 app.use('/api/vehiculos', vehiculoRoutes);
 app.use('/api/contratistas', contratistaRoutes);
 app.use('/api/users', userRoutes);
+app.use('/api/routing', operationalRouteRoutes);
+app.use('/api/operations', operationalDiagnosticsRoutes);
+
+app.get('/api/health', (req, res) => {
+  const mongoReady = mongoose.connection.readyState === 1;
+  const readiness = validateOperationalEnvironment();
+  res.status(mongoReady && readiness.ok ? 200 : 503).json({
+    success: mongoReady && readiness.ok,
+    service: 'tracknarino-backend',
+    environment: readiness.environment,
+    mongo: {
+      ready: mongoReady,
+      state: mongoose.connection.readyState,
+    },
+    realtime: readiness.realtime,
+    features: readiness.features,
+    providers: readiness.providers,
+  });
+});
 
 // Ruta raíz de prueba
 app.get('/', (req, res) => {
   res.send('Bienvenido al backend de Tracknariño');
 });
 
-// Middleware de manejo de errores
-app.use((err, req, res, next) => {
-  console.error(`Error: ${err.message}`);
-  res.status(err.status || 500).json({
-    mensaje: err.message || 'Error interno del servidor',
-    error: process.env.NODE_ENV === 'development' ? err : {}
-  });
-});
+app.use('/api', notFound);
+app.use(errorHandler);
 
 // 🔌 Conexión a MongoDB
-mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/trackarino', {
+const mongoUri = process.env.MONGO_URI || 'mongodb://localhost:27017/trackarino';
+mongoose.connect(mongoUri, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 }).then(() => {
-  console.log('🟢 Conectado a MongoDB');
+  operationalLogger.info('database', 'mongo_connected', {
+    environment: process.env.NODE_ENV || 'development',
+  });
 }).catch((err) => {
-  console.error('🔴 Error al conectar a MongoDB:', err);
+  operationalLogger.error('database', 'mongo_connection_failed', {
+    error: err.message,
+  });
+  if (process.env.NODE_ENV === 'production' || process.env.NODE_ENV === 'staging') {
+    process.exit(1);
+  }
 });
 
 // 🚀 Iniciar servidor
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => {
-  console.log(`🚀 Servidor corriendo en http://localhost:${PORT}`);
+const server = http.createServer(app);
+initializeRealtime(server, corsOptions);
+
+server.listen(PORT, () => {
+  operationalLogger.info('app', 'server_started', {
+    port: PORT,
+    environment: process.env.NODE_ENV || 'development',
+    readiness: startupReadiness,
+  });
 });
+
+async function shutdown(signal) {
+  operationalLogger.info('app', 'shutdown_started', { signal });
+  server.close(async () => {
+    await shutdownRealtime();
+    await mongoose.connection.close(false);
+    operationalLogger.info('app', 'shutdown_complete', { signal });
+    process.exit(0);
+  });
+
+  setTimeout(() => {
+    operationalLogger.error('app', 'shutdown_forced_timeout', { signal });
+    process.exit(1);
+  }, Number(process.env.SHUTDOWN_TIMEOUT_MS || 10000)).unref();
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));

@@ -2,99 +2,143 @@ const express = require('express');
 const router = express.Router();
 const AlertaSeguridad = require('../models/AlertaSeguridad');
 const verificarToken = require('../middleware/authMiddleware');
+const asyncHandler = require('../middleware/asyncHandler');
+const { sendError } = require('../middleware/errorMiddleware');
+const { requireFields } = require('../middleware/validateRequest');
+const { normalizeLatLngInput } = require('../utils/geoValidation');
+const { publishAlertCreated } = require('../services/alertEventService');
+const OperationalRoute = require('../models/OperationalRoute');
+const { parseBboxQuery, queryCorridorAlerts } = require('../services/routeGeospatialService');
+const { resolveRouteTripForUser } = require('../services/routeLifecycleService');
 
 // Crear una alerta
-const crearAlertaHandler = async (req, res) => {
-  try {
-    const { tipo, descripcion, coords, compartir } = req.body;
+const crearAlertaHandler = asyncHandler(async (req, res) => {
+  const { tipo, descripcion, coords, clientEventId, timestamp } = req.body;
+  const normalizedCoordinates = normalizeLatLngInput(coords);
 
-    const alerta = new AlertaSeguridad({
+  if (!normalizedCoordinates) {
+    return sendError(res, 400, 'Coordenadas de alerta inválidas', 'VALIDATION_ERROR');
+  }
+
+  let alerta;
+  try {
+    alerta = new AlertaSeguridad({
       tipo,
       descripcion,
-      coords,
+      coords: { lat: normalizedCoordinates.lat, lng: normalizedCoordinates.lng },
+      coordinates: normalizedCoordinates.coordinates,
       usuario: req.usuario.id,
-      compartir: compartir !== false // por defecto true
+      timestamp: timestamp ? new Date(timestamp) : new Date(),
+      clientEventId,
+      geoMigration: {
+        status: 'resolved',
+        source: 'api',
+        routable: true,
+        missingFields: [],
+        reviewedAt: new Date(),
+      },
     });
 
     await alerta.save();
-
-    res.status(201).json({ mensaje: 'Alerta registrada con éxito', alerta });
   } catch (error) {
-    console.error('Error al crear alerta:', error);
-    res.status(500).json({ error: 'Error al registrar la alerta', detalles: error.message });
+    if (error?.code === 11000 && clientEventId) {
+      alerta = await AlertaSeguridad.findOne({
+        usuario: req.usuario.id,
+        clientEventId,
+      });
+      return res.json({
+        mensaje: 'Alerta ya sincronizada',
+        alerta,
+        duplicate: true,
+      });
+    }
+    throw error;
   }
-};
+  await publishAlertCreated(alerta);
+
+  res.status(201).json({ mensaje: 'Alerta registrada con éxito', alerta });
+});
+
+const listarAlertasHandler = asyncHandler(async (req, res) => {
+  const alertas = await AlertaSeguridad.find()
+    .sort({ createdAt: -1 })
+    .limit(50)
+    .populate('usuario', 'nombre tipoUsuario');
+
+  res.json(alertas);
+});
 
 // Rutas para crear alertas (ambas apuntan al mismo handler)
-router.post('/crear', verificarToken, crearAlertaHandler);
-router.post('/', verificarToken, crearAlertaHandler);
+router.post('/crear', verificarToken, requireFields(['tipo', 'coords']), crearAlertaHandler);
+router.post('/', verificarToken, requireFields(['tipo', 'coords']), crearAlertaHandler);
 
 // Listar alertas recientes (máx 50)
-router.get('/listar', async (req, res) => {
-  try {
-    const alertas = await AlertaSeguridad.find()
-      .sort({ createdAt: -1 })
-      .limit(50)
-      .populate('usuario', 'nombre tipoUsuario');
-    res.json(alertas);
-  } catch (error) {
-    res.status(500).json({ error: 'Error al obtener las alertas' });
+router.get('/listar', verificarToken, listarAlertasHandler);
+router.get('/recientes', verificarToken, listarAlertasHandler);
+
+router.get('/corredor', verificarToken, asyncHandler(async (req, res) => {
+  const routeId = typeof req.query.routeId === 'string' ? req.query.routeId.trim() : null;
+  const bbox = parseBboxQuery(req.query);
+  const severities = typeof req.query.severity === 'string'
+    ? req.query.severity.split(',').map((value) => value.trim()).filter(Boolean)
+    : [];
+
+  if (!routeId && !bbox) {
+    return sendError(res, 400, 'routeId o bbox son obligatorios para consultar alertas de corredor', 'VALIDATION_ERROR');
   }
-});
+
+  if (routeId) {
+    const route = await OperationalRoute.findOne({ routeId }).select('tripId').lean();
+    if (!route) {
+      return sendError(res, 404, 'Ruta operacional no encontrada', 'NOT_FOUND');
+    }
+    await resolveRouteTripForUser({ tripId: route.tripId, user: req.usuario });
+  }
+
+  const result = await queryCorridorAlerts({
+    bbox,
+    routeId,
+    severities,
+    limit: req.query.limit,
+    recentHours: req.query.recentHours,
+    maxRouteDistanceMeters: req.query.maxRouteDistanceMeters,
+  });
+
+  res.json({
+    success: true,
+    ...result,
+  });
+}));
 
 // Listar alertas cercanas a una ubicación (lat, lng, radio en metros)
-router.post('/cercanas', async (req, res) => {
-  try {
-    const { lat, lng, radio } = req.body;
+router.post('/cercanas', verificarToken, asyncHandler(async (req, res) => {
+  const { lat, lng, radio } = req.body;
 
-    if (!lat || !lng) {
-      return res.status(400).json({ error: 'Latitud y longitud son obligatorios' });
-    }
+  const latNumber = Number(lat);
+  const lngNumber = Number(lng);
 
-    const centro = {
-      lat: parseFloat(lat),
-      lng: parseFloat(lng)
-    };
-
-    const rangoMetros = radio ? parseFloat(radio) : 50000; // 50km por defecto
-
-    const todas = await AlertaSeguridad.find()
-      .sort({ createdAt: -1 })
-      .limit(100)
-      .populate('usuario', 'nombre tipoUsuario');
-
-    // Función haversine para calcular distancia
-    const haversine = (coords1, coords2) => {
-      const R = 6371000; // Radio de la Tierra en metros
-      const lat1Rad = coords1.lat * Math.PI / 180;
-      const lat2Rad = coords2.lat * Math.PI / 180;
-      const deltaLat = (coords2.lat - coords1.lat) * Math.PI / 180;
-      const deltaLng = (coords2.lng - coords1.lng) * Math.PI / 180;
-
-      const a = Math.sin(deltaLat / 2) * Math.sin(deltaLat / 2) +
-                Math.cos(lat1Rad) * Math.cos(lat2Rad) *
-                Math.sin(deltaLng / 2) * Math.sin(deltaLng / 2);
-      
-      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-      return R * c;
-    };
-
-    const cercanas = todas.filter(alerta => {
-      if (!alerta.coords || !alerta.coords.lat || !alerta.coords.lng) return false;
-
-      const distancia = haversine(centro, {
-        lat: alerta.coords.lat,
-        lng: alerta.coords.lng
-      });
-
-      return distancia <= rangoMetros;
-    });
-
-    res.json(cercanas);
-  } catch (error) {
-    console.error('Error al buscar alertas cercanas:', error);
-    res.status(500).json({ error: 'Error al buscar alertas cercanas', detalles: error.message });
+  if (!Number.isFinite(latNumber) || !Number.isFinite(lngNumber)
+    || latNumber < -90 || latNumber > 90 || lngNumber < -180 || lngNumber > 180) {
+    return sendError(res, 400, 'Latitud y longitud son obligatorios', 'VALIDATION_ERROR');
   }
-});
+
+  const rangoMetros = Number.isFinite(Number(radio)) ? Number(radio) : 50000; // 50km por defecto
+
+  const cercanas = await AlertaSeguridad.find({
+    coordinates: {
+      $near: {
+        $geometry: {
+          type: 'Point',
+          coordinates: [lngNumber, latNumber],
+        },
+        $maxDistance: rangoMetros,
+      },
+    },
+  })
+    .limit(100)
+    .populate('usuario', 'nombre tipoUsuario');
+
+  res.json(cercanas);
+}));
 
 module.exports = router;

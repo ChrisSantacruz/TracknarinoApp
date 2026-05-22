@@ -1,3 +1,5 @@
+import '../utils/geo_utils.dart';
+
 class AlertaSeguridad {
   final String? id;
   final String tipo;
@@ -42,15 +44,17 @@ class AlertaSeguridad {
       fechaCreacion = DateTime.now();
     }
 
+    final coordResult = parseLocationPayload(json);
+    if (!coordResult.isValid || coordResult.coordinate == null) {
+      throw FormatException('Alerta sin coordenadas válidas');
+    }
+
     return AlertaSeguridad(
       id: json['_id'] ?? json['id'],
       tipo: json['tipo'] ?? 'otro',
       descripcion: json['descripcion'],
       usuario: usuarioId,
-      coords: {
-        'lat': (json['coords']['lat'] as num).toDouble(),
-        'lng': (json['coords']['lng'] as num).toDouble(),
-      },
+      coords: coordResult.coordinate!.toCoordsMap(),
       timestamp: fechaCreacion,
       imagenUrl: json['imagenUrl'],
     );

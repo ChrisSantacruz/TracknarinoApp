@@ -4,7 +4,9 @@ import '../../services/oportunidad_service.dart';
 import 'ruta_viaje_screen.dart';
 
 class OportunidadesScreen extends StatefulWidget {
-  const OportunidadesScreen({super.key});
+  final VoidCallback? onTripAccepted;
+
+  const OportunidadesScreen({super.key, this.onTripAccepted});
 
   @override
   State<OportunidadesScreen> createState() => _OportunidadesScreenState();
@@ -25,9 +27,10 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
     setState(() {
       _isLoading = true;
     });
-    
+
     try {
-      final oportunidades = await OportunidadService.obtenerOportunidadesDisponibles();
+      final oportunidades =
+          await OportunidadService.obtenerOportunidadesDisponibles();
       setState(() {
         _oportunidades = oportunidades;
         _isLoading = false;
@@ -45,13 +48,14 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
     return Scaffold(
       body: RefreshIndicator(
         onRefresh: _cargarOportunidades,
-        child: _isLoading 
-          ? const Center(child: CircularProgressIndicator())
-          : _errorMessage.isNotEmpty 
-            ? Center(child: Text(_errorMessage))
-            : _oportunidades.isEmpty 
-              ? _buildEmptyState() 
-              : _buildOportunidadesList(),
+        child:
+            _isLoading
+                ? const Center(child: CircularProgressIndicator())
+                : _errorMessage.isNotEmpty
+                ? Center(child: Text(_errorMessage))
+                : _oportunidades.isEmpty
+                ? _buildEmptyState()
+                : _buildOportunidadesList(),
       ),
     );
   }
@@ -69,18 +73,12 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
           const SizedBox(height: 16),
           const Text(
             'No hay oportunidades disponibles',
-            style: TextStyle(
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-            ),
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
           ),
           const SizedBox(height: 8),
           Text(
             'Vuelve más tarde para ver nuevas cargas',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey[600],
-            ),
+            style: TextStyle(fontSize: 16, color: Colors.grey[600]),
           ),
           const SizedBox(height: 24),
           OutlinedButton.icon(
@@ -105,10 +103,15 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
   }
 
   Widget _buildOportunidadCard(Oportunidad oportunidad) {
-    // Calcular distancia y duración estimada (para simular como en Uber)
-    final distanciaKm = (10 + oportunidad.titulo.length) % 100;  // Simulado
-    final duracionMinutos = distanciaKm * 2;  // Simulado
-    
+    final distancia =
+        oportunidad.distanciaKm != null
+            ? '${oportunidad.distanciaKm} km'
+            : 'No disponible';
+    final duracion =
+        oportunidad.duracionEstimadaHoras != null
+            ? '${oportunidad.duracionEstimadaHoras} h'
+            : 'No disponible';
+
     return Card(
       margin: const EdgeInsets.only(bottom: 16),
       elevation: 2,
@@ -140,7 +143,10 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
                   ),
                 ),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
                   decoration: BoxDecoration(
                     color: Theme.of(context).primaryColor,
                     borderRadius: BorderRadius.circular(20),
@@ -156,7 +162,7 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
               ],
             ),
           ),
-          
+
           // Cuerpo de la tarjeta
           Padding(
             padding: const EdgeInsets.all(16),
@@ -165,38 +171,29 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
               children: [
                 // Origen y destino
                 _buildRouteInfo(oportunidad),
-                
+
                 const Divider(height: 24),
-                
+
                 // Información adicional
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
+                    _buildInfoItem(Icons.route, distancia, 'Distancia'),
+                    _buildInfoItem(Icons.timer, duracion, 'Duración est.'),
                     _buildInfoItem(
-                      Icons.route, 
-                      '$distanciaKm km', 
-                      'Distancia'
-                    ),
-                    _buildInfoItem(
-                      Icons.timer, 
-                      '~$duracionMinutos min', 
-                      'Duración est.'
-                    ),
-                    _buildInfoItem(
-                      Icons.calendar_today, 
+                      Icons.calendar_today,
                       _formatDate(oportunidad.fecha),
-                      'Fecha'
+                      'Fecha',
                     ),
                   ],
                 ),
-                
-                if (oportunidad.descripcion != null && oportunidad.descripcion!.isNotEmpty) ...[
+
+                if (oportunidad.descripcion != null &&
+                    oportunidad.descripcion!.isNotEmpty) ...[
                   const Divider(height: 24),
                   Text(
                     oportunidad.descripcion!,
-                    style: TextStyle(
-                      color: Colors.grey[700],
-                    ),
+                    style: TextStyle(color: Colors.grey[700]),
                   ),
                 ],
                 const Divider(height: 24),
@@ -208,7 +205,7 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
               ],
             ),
           ),
-          
+
           // Botón de acción
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -228,7 +225,7 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
               child: const Text('Ver detalles'),
             ),
           ),
-          
+
           const SizedBox(height: 8),
         ],
       ),
@@ -240,21 +237,9 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
       children: [
         Column(
           children: [
-            const Icon(
-              Icons.circle, 
-              color: Colors.green,
-              size: 14,
-            ),
-            Container(
-              width: 2,
-              height: 30,
-              color: Colors.grey[300],
-            ),
-            const Icon(
-              Icons.location_on,
-              color: Colors.red,
-              size: 14,
-            ),
+            const Icon(Icons.circle, color: Colors.green, size: 14),
+            Container(width: 2, height: 30, color: Colors.grey[300]),
+            const Icon(Icons.location_on, color: Colors.red, size: 14),
           ],
         ),
         const SizedBox(width: 12),
@@ -264,16 +249,12 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
             children: [
               Text(
                 oportunidad.origen,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w500,
-                ),
+                style: const TextStyle(fontWeight: FontWeight.w500),
               ),
               const SizedBox(height: 30),
               Text(
                 oportunidad.destino,
-                style: const TextStyle(
-                  fontWeight: FontWeight.w500,
-                ),
+                style: const TextStyle(fontWeight: FontWeight.w500),
               ),
             ],
           ),
@@ -289,18 +270,9 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
         const SizedBox(height: 4),
         Text(
           value,
-          style: const TextStyle(
-            fontWeight: FontWeight.bold,
-            fontSize: 14,
-          ),
+          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
         ),
-        Text(
-          label,
-          style: TextStyle(
-            color: Colors.grey[600],
-            fontSize: 12,
-          ),
-        ),
+        Text(label, style: TextStyle(color: Colors.grey[600], fontSize: 12)),
       ],
     );
   }
@@ -340,11 +312,11 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
                 ],
               ),
               const SizedBox(height: 16),
-              
+
               _buildRouteInfo(oportunidad),
-              
+
               const SizedBox(height: 16),
-              
+
               Text(
                 'Precio: \$${oportunidad.precio.toStringAsFixed(0)}',
                 style: const TextStyle(
@@ -353,14 +325,15 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
                   color: Colors.green,
                 ),
               ),
-              
+
               const SizedBox(height: 8),
-              
+
               Text(
                 'Fecha: ${oportunidad.fecha.day}/${oportunidad.fecha.month}/${oportunidad.fecha.year}',
               ),
-              
-              if (oportunidad.descripcion != null && oportunidad.descripcion!.isNotEmpty) ...[
+
+              if (oportunidad.descripcion != null &&
+                  oportunidad.descripcion!.isNotEmpty) ...[
                 const SizedBox(height: 16),
                 const Text(
                   'Descripción:',
@@ -369,9 +342,9 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
                 const SizedBox(height: 4),
                 Text(oportunidad.descripcion!),
               ],
-              
+
               const SizedBox(height: 24),
-              
+
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton(
@@ -405,20 +378,23 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
     // Mostrar diálogo de confirmación
     final confirmar = await showDialog<bool>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Aceptar carga'),
-        content: Text('¿Estás seguro de que deseas aceptar la carga de ${oportunidad.origen} a ${oportunidad.destino}?'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancelar'),
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Aceptar carga'),
+            content: Text(
+              '¿Estás seguro de que deseas aceptar la carga de ${oportunidad.origen} a ${oportunidad.destino}?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Aceptar'),
+              ),
+            ],
           ),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Aceptar'),
-          ),
-        ],
-      ),
     );
 
     if (confirmar != true) return;
@@ -433,8 +409,10 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
       );
 
       // Aceptar la carga en el backend
-      final oportunidadAceptada = await OportunidadService.aceptarOportunidad(oportunidad.id!);
-      
+      final oportunidadAceptada = await OportunidadService.aceptarOportunidad(
+        oportunidad.id!,
+      );
+
       // Cerrar indicador de carga
       if (!mounted) return;
       Navigator.pop(context);
@@ -448,14 +426,22 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
       );
 
       // Navegar a la pantalla de ruta
-      Navigator.pushReplacement(
+      await Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (context) => RutaViajeScreen(oportunidad: oportunidadAceptada),
+          builder:
+              (context) => RutaViajeScreen(oportunidad: oportunidadAceptada),
         ),
       );
 
-      // Recargar oportunidades para eliminar la que fue aceptada
+      widget.onTripAccepted?.call();
+      _cargarOportunidades();
+    } on TripActionQueuedException catch (e) {
+      if (!mounted) return;
+      Navigator.pop(context);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message), backgroundColor: Colors.orange),
+      );
       _cargarOportunidades();
     } catch (e) {
       // Cerrar indicador de carga si está abierto
@@ -465,17 +451,15 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
       // Mostrar error
       String mensaje = 'Error al aceptar carga';
       if (e.toString().contains('Ya tienes un viaje activo')) {
-        mensaje = 'Ya tienes un viaje activo. Finaliza tu viaje actual antes de aceptar otra carga.';
+        mensaje =
+            'Ya tienes un viaje activo. Finaliza tu viaje actual antes de aceptar otra carga.';
       } else if (e.toString().contains('ya fue aceptada')) {
         mensaje = 'Esta oportunidad ya fue aceptada por otro camionero.';
       }
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(mensaje),
-          backgroundColor: Colors.red,
-        ),
+        SnackBar(content: Text(mensaje), backgroundColor: Colors.red),
       );
     }
   }
-} 
+}

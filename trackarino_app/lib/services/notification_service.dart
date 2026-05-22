@@ -1,17 +1,27 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
 class NotificationService {
-  final FirebaseMessaging _firebaseMessaging = FirebaseMessaging.instance;
   final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
+  FirebaseMessaging? _firebaseMessaging;
+  bool _initialized = false;
   
   // Callback para manejar la acción cuando se toca una notificación
   Function(RemoteMessage)? onNotificationTap;
 
   // Inicializar el servicio
   Future<void> initialize() async {
+    if (kIsWeb && Firebase.apps.isEmpty) {
+      return;
+    }
+
+    _firebaseMessaging ??= FirebaseMessaging.instance;
+    final messaging = _firebaseMessaging!;
+
     // Configurar Firebase Messaging
-    await _firebaseMessaging.requestPermission(
+    await messaging.requestPermission(
       alert: true,
       badge: true,
       sound: true,
@@ -49,6 +59,7 @@ class NotificationService {
         onNotificationTap!(message);
       }
     });
+    _initialized = true;
   }
 
   // Manejar mensajes recibidos en primer plano
@@ -89,17 +100,20 @@ class NotificationService {
 
   // Obtener el token del dispositivo
   Future<String?> getDeviceToken() async {
-    return await _firebaseMessaging.getToken();
+    if (!_initialized || _firebaseMessaging == null) return null;
+    return await _firebaseMessaging!.getToken();
   }
 
   // Suscribirse a un tema
   Future<void> subscribeTopic(String topic) async {
-    await _firebaseMessaging.subscribeToTopic(topic);
+    if (!_initialized || _firebaseMessaging == null) return;
+    await _firebaseMessaging!.subscribeToTopic(topic);
   }
 
   // Cancelar suscripción a un tema
   Future<void> unsubscribeTopic(String topic) async {
-    await _firebaseMessaging.unsubscribeFromTopic(topic);
+    if (!_initialized || _firebaseMessaging == null) return;
+    await _firebaseMessaging!.unsubscribeFromTopic(topic);
   }
 
   // Mostrar una notificación local

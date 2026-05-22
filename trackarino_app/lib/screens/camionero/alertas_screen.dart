@@ -1,22 +1,31 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
-import 'package:image_picker/image_picker.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:latlong2/latlong.dart';
+import '../../map/operational_map_intelligence.dart';
 import '../../models/alerta_model.dart';
 import '../../services/alerta_service.dart';
 import '../../services/location_service.dart';
+import '../../state/alert_store.dart';
+import '../../widgets/operational/operational_error_state.dart';
+import '../../widgets/operational/operational_empty_state.dart';
+import '../../widgets/operational/operational_skeleton.dart';
+import '../../theme/app_colors.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/operational/map_control_cluster.dart';
+import '../../widgets/operational/operational_map_primitives.dart';
 import 'package:provider/provider.dart';
-import '../../utils/flutter_map_fixes.dart';
 
 class AlertasScreen extends StatefulWidget {
-  const AlertasScreen({super.key});
+  final bool embedded;
+
+  const AlertasScreen({super.key, this.embedded = false});
 
   @override
   State<AlertasScreen> createState() => _AlertasScreenState();
 }
 
-class _AlertasScreenState extends State<AlertasScreen> with SingleTickerProviderStateMixin {
+class _AlertasScreenState extends State<AlertasScreen>
+    with SingleTickerProviderStateMixin {
   List<AlertaSeguridad> _alertas = [];
   bool _isLoading = true;
   String _errorMessage = '';
@@ -24,16 +33,21 @@ class _AlertasScreenState extends State<AlertasScreen> with SingleTickerProvider
   String _selectedTipoAlerta = 'trancon';
   final TextEditingController _descripcionController = TextEditingController();
   bool _isSendingAlert = false;
-  final ImagePicker _picker = ImagePicker();
-  File? _selectedImage;
   LatLng? _selectedLocation;
   bool _compartirConOtros = true;
   bool _verMapa = false;
+  final MapController _alertMapController = MapController();
+  final OperationalMapDiagnostics _mapDiagnostics = OperationalMapDiagnostics();
+  LatLng _alertMapCenter = LatLng(1.2136, -77.2811);
+  double _alertMapZoom = 12;
+  DateTime? _lastAlertViewportUpdateAt;
+  bool _showAlertDensity = false;
+  final Set<String> _visibleAlertSeverities = {'critical', 'warning', 'info'};
 
   final Map<String, Map<String, dynamic>> _tiposAlertas = {
     'trancon': {
-      'titulo': 'Tráfico',
-      'descripcion': 'Reportar un tráfico intenso o embotellamiento',
+      'titulo': 'Tr?fico',
+      'descripcion': 'Reportar un tr?fico intenso o embotellamiento',
       'icono': Icons.traffic,
       'color': Colors.orange,
     },
@@ -56,20 +70,20 @@ class _AlertasScreenState extends State<AlertasScreen> with SingleTickerProvider
       'color': Colors.red,
     },
     'obstaculo': {
-      'titulo': 'Obstáculo',
-      'descripcion': 'Reportar un obstáculo en la carretera',
+      'titulo': 'Obst?culo',
+      'descripcion': 'Reportar un obst?culo en la carretera',
       'icono': Icons.warning_amber,
       'color': Colors.amber,
     },
     'clima': {
       'titulo': 'Clima adverso',
-      'descripcion': 'Reportar condiciones climáticas adversas',
+      'descripcion': 'Reportar condiciones clim?ticas adversas',
       'icono': Icons.cloud,
       'color': Colors.blue,
     },
     'accidente': {
       'titulo': 'Accidente',
-      'descripcion': 'Reportar un accidente de tránsito',
+      'descripcion': 'Reportar un accidente de tr?nsito',
       'icono': Icons.car_crash,
       'color': Colors.red,
     },
@@ -94,7 +108,7 @@ class _AlertasScreenState extends State<AlertasScreen> with SingleTickerProvider
     _cargarAlertas();
     _cargarUbicacionActual();
   }
-  
+
   @override
   void dispose() {
     _tabController.dispose();
@@ -107,100 +121,118 @@ class _AlertasScreenState extends State<AlertasScreen> with SingleTickerProvider
       _isLoading = true;
       _errorMessage = '';
     });
-    
-    try {
-      final position = await Provider.of<LocationService>(context, listen: false).getCurrentLocation();
-      
-      if (position != null) {
-        final alertas = await AlertaService.obtenerAlertasCercanas(position);
-        setState(() {
-          _alertas = alertas;
-          _isLoading = false;
-          
-          // Actualizar ubicación seleccionada para el mapa
-          _selectedLocation = LatLng(position.latitude, position.longitude);
-        });
-      } else {
-        setState(() {
-          _errorMessage = 'No se pudo obtener tu ubicación actual';
-          _isLoading = false;
-          _alertas = [];
-        });
-      }
-    } catch (e) {
-      debugPrint('Error al cargar alertas: $e');
+
+    final position = await Provider.of<LocationService>(
+      context,
+      listen: false,
+    ).getCurrentLocation();
+
+    if (position == null) {
       setState(() {
-        _errorMessage = 'Error al cargar alertas. Verifica tu conexión.';
+        _errorMessage = 'No se pudo obtener tu ubicaci?n actual';
         _isLoading = false;
         _alertas = [];
       });
+      return;
     }
+
+    await context.read<AlertStore>().refreshNearby(position);
+    final store = context.read<AlertStore>();
+    if (!mounted) return;
+    setState(() {
+      _alertas = store.alerts;
+      _isLoading = false;
+      _errorMessage = store.errorMessage ?? '';
+      _selectedLocation = LatLng(position.latitude, position.longitude);
+      _alertMapCenter = _selectedLocation!;
+    });
   }
-  
-  Future<void> _pickImage() async {
-    try {
-      final XFile? image = await _picker.pickImage(source: ImageSource.camera);
-      if (image != null) {
-        setState(() {
-          _selectedImage = File(image.path);
-        });
-      }
-    } catch (e) {
-      _mostrarError('No se pudo capturar la imagen: $e');
-    }
-  }
-  
+
   void _mostrarError(String mensaje) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(mensaje)),
-    );
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(mensaje)));
   }
-  
+
   void _toggleMapView() {
     setState(() {
       _verMapa = !_verMapa;
     });
   }
-  
+
   void _onMapTap(LatLng position) {
     setState(() {
       _selectedLocation = position;
     });
   }
-  
+
+  void _handleAlertMapPositionChanged(MapPosition position, bool hasGesture) {
+    final nextCenter = position.center;
+    final nextZoom = position.zoom;
+    if (nextCenter == null && nextZoom == null) return;
+
+    final now = DateTime.now();
+    final center = nextCenter ?? _alertMapCenter;
+    final zoom = nextZoom ?? _alertMapZoom;
+    final movedMeters = const Distance().as(
+      LengthUnit.Meter,
+      _alertMapCenter,
+      center,
+    );
+    final shouldRefreshPlan =
+        _lastAlertViewportUpdateAt == null ||
+        now.difference(_lastAlertViewportUpdateAt!).inMilliseconds >= 180 ||
+        movedMeters >= 120 ||
+        (zoom - _alertMapZoom).abs() >= 0.3;
+
+    if (!shouldRefreshPlan) return;
+
+    setState(() {
+      _alertMapCenter = center;
+      _alertMapZoom = zoom;
+      _lastAlertViewportUpdateAt = now;
+    });
+  }
+
   Future<void> _crearAlerta() async {
     if (_selectedLocation == null) {
-      _mostrarError('Selecciona una ubicación en el mapa');
+      _mostrarError('Selecciona una ubicaci?n en el mapa');
       return;
     }
-    
+
     setState(() {
       _isSendingAlert = true;
     });
-    
+
     try {
-      await AlertaService.crearAlerta(
+      final created = await AlertaService.crearAlerta(
         tipo: _selectedTipoAlerta,
         coords: {
           'lat': _selectedLocation!.latitude,
           'lng': _selectedLocation!.longitude,
         },
-        descripcion: _descripcionController.text.isNotEmpty 
-            ? _descripcionController.text 
-            : null,
-        imagePath: _selectedImage?.path,
+        descripcion:
+            _descripcionController.text.isNotEmpty
+                ? _descripcionController.text
+                : null,
         compartir: _compartirConOtros,
       );
-      
+
+      if (created != null) {
+        context.read<AlertStore>().upsertLocal(created);
+      }
+
       _descripcionController.clear();
       setState(() {
-        _selectedImage = null;
         _isSendingAlert = false;
       });
-      
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Alerta creada con éxito')),
+          const SnackBar(
+            content: Text('Alerta guardada. Se sincronizar? con el servidor.'),
+            backgroundColor: Colors.orange,
+          ),
         );
         _cargarAlertas(); // Recargar alertas
       }
@@ -214,17 +246,23 @@ class _AlertasScreenState extends State<AlertasScreen> with SingleTickerProvider
 
   Future<void> _cargarUbicacionActual() async {
     try {
-      final position = await Provider.of<LocationService>(context, listen: false).getCurrentLocation();
-      
+      final position =
+          await Provider.of<LocationService>(
+            context,
+            listen: false,
+          ).getCurrentLocation();
+
       if (position != null && mounted) {
         setState(() {
           _selectedLocation = LatLng(position.latitude, position.longitude);
-          debugPrint('Ubicación actual cargada: ${position.latitude}, ${position.longitude}');
+          debugPrint(
+            'Ubicaci?n actual cargada: ${position.latitude}, ${position.longitude}',
+          );
         });
       }
     } catch (e) {
-      debugPrint('Error al cargar ubicación inicial: $e');
-      // Usar ubicación predeterminada (Pasto)
+      debugPrint('Error al cargar ubicaci?n inicial: $e');
+      // Usar ubicaci?n predeterminada (Pasto)
       if (mounted) {
         setState(() {
           _selectedLocation = LatLng(1.2136, -77.2811);
@@ -235,122 +273,343 @@ class _AlertasScreenState extends State<AlertasScreen> with SingleTickerProvider
 
   @override
   Widget build(BuildContext context) {
+    final content = Column(
+      children: [
+        if (widget.embedded)
+          Material(
+            color: Theme.of(context).colorScheme.surface,
+            child: TabBar(
+              controller: _tabController,
+              tabs: const [Tab(text: 'Ver alertas'), Tab(text: 'Reportar')],
+            ),
+          ),
+        Expanded(
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              _buildAlertasTab(),
+              _buildCrearAlertaTab(),
+            ],
+          ),
+        ),
+      ],
+    );
+
+    if (widget.embedded) return content;
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Alertas de Seguridad'),
+        title: const Text('Alertas de seguridad'),
         bottom: TabBar(
           controller: _tabController,
-          tabs: const [
-            Tab(text: 'Ver Alertas'),
-            Tab(text: 'Crear Alerta'),
-          ],
+          tabs: const [Tab(text: 'Ver alertas'), Tab(text: 'Reportar')],
         ),
         actions: [
           IconButton(
             icon: Icon(_verMapa ? Icons.list : Icons.map),
             onPressed: _toggleMapView,
-            tooltip: _verMapa ? 'Ver lista' : 'Ver mapa',
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _cargarAlertas,
-            tooltip: 'Actualizar',
           ),
         ],
       ),
-      body: TabBarView(
-        controller: _tabController,
-        children: [
-          // Tab 1: Ver Alertas
-          _buildAlertasTab(),
-          
-          // Tab 2: Crear Alerta
-          _buildCrearAlertaTab(),
-        ],
-      ),
+      body: content,
     );
   }
-  
+
   Widget _buildAlertasTab() {
     if (_isLoading) {
-      return const Center(child: CircularProgressIndicator());
+      return const OperationalSkeleton(height: 200, width: double.infinity);
     }
-    
+
     if (_errorMessage.isNotEmpty) {
-      return Center(
-        child: Text(
-          _errorMessage,
-          style: TextStyle(color: Theme.of(context).colorScheme.error),
-          textAlign: TextAlign.center,
-        ),
+      return OperationalErrorState(
+        message: _errorMessage,
+        onRetry: _cargarAlertas,
       );
     }
-    
+
     if (_alertas.isEmpty) {
       return const Center(
         child: Text('No hay alertas cercanas en este momento'),
       );
     }
-    
+
     if (_verMapa) {
       return _buildMapaAlertas();
     } else {
       return _buildListaAlertas();
     }
   }
-  
+
   Widget _buildMapaAlertas() {
-    return FlutterMap(
-      options: MapOptions(
-        center: _selectedLocation ?? LatLng(1.2136, -77.2811),
-        zoom: 12.0,
-        onTap: (_, point) => _onMapTap(point),
-      ),
+    final alertPlan = OperationalMapIntelligence.buildAlertPlan(
+      alerts: _alertas,
+      mapCenter: _alertMapCenter,
+      zoom: _alertMapZoom,
+      currentLocation: _selectedLocation,
+      visibleSeverities: _visibleAlertSeverities,
+    );
+    _mapDiagnostics.recordAlertPlan(alertPlan);
+
+    return Stack(
       children: [
-        TileLayer(
-          urlTemplate: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-          subdomains: ['a', 'b', 'c'],
-        ),
-        MarkerLayer(
-          markers: [
-            // Marcador para ubicación actual
-            if (_selectedLocation != null)
-              Marker(
-                point: _selectedLocation!,
-                builder: (ctx) => Icon(
-                  Icons.my_location,
-                  color: Colors.blue,
-                  size: 30,
-                ),
-              ),
-            
-            // Marcadores para cada alerta
-            ..._alertas.map((alerta) => Marker(
-              point: LatLng(alerta.coords['lat']!, alerta.coords['lng']!),
-              builder: (ctx) => Icon(
-                _tiposAlertas[alerta.tipo]?['icono'] as IconData? ?? Icons.warning,
-                color: _tiposAlertas[alerta.tipo]?['color'] as Color? ?? Colors.red,
-                size: 30,
-              ),
-            )),
+        FlutterMap(
+          mapController: _alertMapController,
+          options: MapOptions(
+            center: _selectedLocation ?? LatLng(1.2136, -77.2811),
+            zoom: 12.0,
+            onTap: (_, point) => _onMapTap(point),
+            onPositionChanged: _handleAlertMapPositionChanged,
+          ),
+          children: [
+            TileLayer(
+              urlTemplate: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+              subdomains: const ['a', 'b', 'c'],
+            ),
+            OperationalDensityCircleLayer(
+              cells: alertPlan.densityCells,
+              color: AppColors.alertWarning,
+              visible: _showAlertDensity,
+            ),
+            MarkerLayer(
+              markers: [
+                ..._buildAlertClusterMarkers(alertPlan),
+                ..._buildAlertMarkers(alertPlan),
+                if (_selectedLocation != null) _currentLocationMarker(),
+              ],
+            ),
           ],
+        ),
+        Positioned(
+          left: AppSpacing.md,
+          top: AppSpacing.md,
+          child: Material(
+            elevation: 7,
+            borderRadius: BorderRadius.circular(AppSpacing.chipRadius),
+            color: Theme.of(
+              context,
+            ).colorScheme.surface.withValues(alpha: 0.96),
+            child: Padding(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.sm,
+              ),
+              child: Text(
+                _alertas.length == 1
+                    ? '1 alerta cercana'
+                    : '${alertPlan.totalInputCount} alertas priorizadas',
+                style: Theme.of(
+                  context,
+                ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w800),
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          left: AppSpacing.md,
+          top: 72,
+          child: _buildAlertPriorityFilters(),
+        ),
+        Positioned(
+          right: AppSpacing.md,
+          bottom: AppSpacing.md,
+          child: MapControlCluster(
+            onZoomIn:
+                () => _alertMapController.move(
+                  _alertMapController.center,
+                  _alertMapController.zoom + 1,
+                ),
+            onZoomOut:
+                () => _alertMapController.move(
+                  _alertMapController.center,
+                  _alertMapController.zoom - 1,
+                ),
+            onRecenter: () {
+              if (_selectedLocation != null) {
+                _alertMapController.move(_selectedLocation!, 14);
+              }
+            },
+          ),
         ),
       ],
     );
   }
-  
+
+  List<Marker> _buildAlertMarkers(OperationalAlertRenderPlan plan) {
+    return plan.markers.map((item) {
+      return Marker(
+        width: 52,
+        height: 52,
+        point: item.point,
+        builder:
+            (ctx) => OperationalAlertMarker(
+              type: item.alert.tipo,
+              timestamp: item.alert.timestamp,
+              selected: item.priority >= 135,
+              onTap: () => _mostrarDetalleAlerta(item.alert),
+            ),
+      );
+    }).toList();
+  }
+
+  List<Marker> _buildAlertClusterMarkers(OperationalAlertRenderPlan plan) {
+    return plan.clusters.map((cluster) {
+      return Marker(
+        width: 62,
+        height: 62,
+        point: cluster.center,
+        builder:
+            (ctx) => OperationalAlertClusterMarker(
+              cluster: cluster,
+              onTap: () => _expandAlertCluster(cluster),
+            ),
+      );
+    }).toList();
+  }
+
+  Marker _currentLocationMarker() {
+    return Marker(
+      width: 52,
+      height: 52,
+      point: _selectedLocation!,
+      builder:
+          (ctx) => const OperationalVehiclePresenceMarker(
+            status: 'active',
+            heading: 0,
+            semanticsLabel: 'Ubicacion actual',
+          ),
+    );
+  }
+
+  void _expandAlertCluster(OperationalAlertCluster cluster) {
+    final points = cluster.items.map((item) => item.point).toList();
+    if (points.length < 2) {
+      _alertMapController.move(
+        cluster.center,
+        (_alertMapController.zoom + 1).clamp(10, 16).toDouble(),
+      );
+      return;
+    }
+    _alertMapController.fitBounds(
+      LatLngBounds.fromPoints(points),
+      options: const FitBoundsOptions(padding: EdgeInsets.all(82), maxZoom: 15),
+    );
+  }
+
+  Widget _buildAlertPriorityFilters() {
+    return Material(
+      elevation: 6,
+      shadowColor: Colors.black.withValues(alpha: 0.16),
+      borderRadius: BorderRadius.circular(999),
+      color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.xxs),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _severityChip('critical', 'Criticas', AppColors.alertCritical),
+            _severityChip('warning', 'Riesgos', AppColors.alertWarning),
+            _severityChip('info', 'Info', AppColors.alertInfo),
+            _densityChip(),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _severityChip(String severity, String label, Color color) {
+    final selected = _visibleAlertSeverities.contains(severity);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: InkWell(
+        onTap: () {
+          setState(() {
+            if (selected) {
+              if (_visibleAlertSeverities.length == 1) return;
+              _visibleAlertSeverities.remove(severity);
+            } else {
+              _visibleAlertSeverities.add(severity);
+            }
+          });
+        },
+        borderRadius: BorderRadius.circular(999),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.sm,
+            vertical: AppSpacing.xs,
+          ),
+          decoration: BoxDecoration(
+            color:
+                selected ? color.withValues(alpha: 0.14) : Colors.transparent,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color:
+                  selected
+                      ? color
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _densityChip() {
+    final selected = _showAlertDensity;
+    const color = AppColors.statusSyncing;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 2),
+      child: InkWell(
+        onTap: () => setState(() => _showAlertDensity = !_showAlertDensity),
+        borderRadius: BorderRadius.circular(999),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 160),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.sm,
+            vertical: AppSpacing.xs,
+          ),
+          decoration: BoxDecoration(
+            color:
+                selected ? color.withValues(alpha: 0.14) : Colors.transparent,
+            borderRadius: BorderRadius.circular(999),
+          ),
+          child: Text(
+            'Densidad',
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color:
+                  selected
+                      ? color
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   Widget _buildListaAlertas() {
     return ListView.builder(
       itemCount: _alertas.length,
       itemBuilder: (context, index) {
         final alerta = _alertas[index];
         final tipoAlerta = _tiposAlertas[alerta.tipo];
-        
+
         return Card(
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: ListTile(
             leading: CircleAvatar(
-              backgroundColor: (tipoAlerta?['color'] as Color? ?? Colors.grey).withAlpha(50),
+              backgroundColor: (tipoAlerta?['color'] as Color? ?? Colors.grey)
+                  .withAlpha(50),
               child: Icon(
                 tipoAlerta?['icono'] as IconData? ?? Icons.warning,
                 color: tipoAlerta?['color'] as Color? ?? Colors.grey,
@@ -361,11 +620,12 @@ class _AlertasScreenState extends State<AlertasScreen> with SingleTickerProvider
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  alerta.descripcion != null 
-                      ? alerta.descripcion! 
-                      : tipoAlerta?['descripcion'] as String? ?? ''
+                  alerta.descripcion != null
+                      ? alerta.descripcion!
+                      : tipoAlerta?['descripcion'] as String? ?? '',
                 ),
-                if (alerta.imagenUrl != null && alerta.imagenUrl!.isNotEmpty) ...[
+                if (alerta.imagenUrl != null &&
+                    alerta.imagenUrl!.isNotEmpty) ...[
                   const SizedBox(height: 4),
                   Row(
                     children: [
@@ -386,7 +646,10 @@ class _AlertasScreenState extends State<AlertasScreen> with SingleTickerProvider
             ),
             onTap: () {
               setState(() {
-                _selectedLocation = LatLng(alerta.coords['lat']!, alerta.coords['lng']!);
+                _selectedLocation = LatLng(
+                  alerta.coords['lat']!,
+                  alerta.coords['lng']!,
+                );
                 _verMapa = true;
               });
             },
@@ -395,11 +658,11 @@ class _AlertasScreenState extends State<AlertasScreen> with SingleTickerProvider
       },
     );
   }
-  
+
   Widget _buildCrearAlertaTab() {
     final ubicacion = _selectedLocation ?? LatLng(1.2136, -77.2811);
     final MapController mapController = MapController();
-    
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -410,16 +673,16 @@ class _AlertasScreenState extends State<AlertasScreen> with SingleTickerProvider
             style: Theme.of(context).textTheme.titleLarge,
             textAlign: TextAlign.center,
           ),
-          
+
           const SizedBox(height: 16),
-          
+
           const Text(
-            'Selecciona una ubicación en el mapa, elige el tipo de alerta y añade una descripción opcional.',
+            'Selecciona una ubicaci?n en el mapa, elige el tipo de alerta y a?ade una descripci?n opcional.',
             textAlign: TextAlign.center,
           ),
-          
+
           const SizedBox(height: 16),
-          
+
           Stack(
             children: [
               Container(
@@ -439,20 +702,21 @@ class _AlertasScreenState extends State<AlertasScreen> with SingleTickerProvider
                     ),
                     children: [
                       TileLayer(
-                        urlTemplate: "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+                        urlTemplate:
+                            "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
                         subdomains: const ['a', 'b', 'c'],
                       ),
                       MarkerLayer(
                         markers: [
                           Marker(
-                            width: 40.0,
-                            height: 40.0,
+                            width: 52.0,
+                            height: 52.0,
                             point: ubicacion,
-                            builder: (ctx) => const Icon(
-                              Icons.location_on,
-                              color: Colors.red,
-                              size: 40,
-                            ),
+                            builder:
+                                (ctx) => OperationalAlertMarker(
+                                  type: _selectedTipoAlerta,
+                                  selected: true,
+                                ),
                           ),
                         ],
                       ),
@@ -460,165 +724,132 @@ class _AlertasScreenState extends State<AlertasScreen> with SingleTickerProvider
                   ),
                 ),
               ),
-              
+
               // Controles del mapa
               Positioned(
                 right: 8,
                 bottom: 8,
                 child: Column(
                   children: [
-                    // Botón ubicación actual
-                    FloatingActionButton(
-                      mini: true,
-                      heroTag: 'my_location_alert',
+                    // Bot?n ubicaci?n actual
+                    OperationalMapActionChip(
+                      svg: operationalCrosshairSvg,
+                      label: 'Ubicaci?n',
                       onPressed: () async {
                         await _cargarUbicacionActual();
                         if (_selectedLocation != null) {
                           mapController.move(_selectedLocation!, 15.0);
                         }
                       },
-                      child: const Icon(Icons.my_location),
-                      tooltip: 'Mi ubicación',
                     ),
                     const SizedBox(height: 4),
-                    // Botón zoom in
-                    FloatingActionButton(
-                      mini: true,
-                      heroTag: 'zoom_in_alert',
-                      onPressed: () {
+                    MapControlCluster(
+                      onZoomIn: () {
                         mapController.move(
                           mapController.center,
                           mapController.zoom + 1.0,
                         );
                       },
-                      child: const Icon(Icons.add),
-                      tooltip: 'Acercar',
-                    ),
-                    const SizedBox(height: 4),
-                    // Botón zoom out
-                    FloatingActionButton(
-                      mini: true,
-                      heroTag: 'zoom_out_alert',
-                      onPressed: () {
+                      onZoomOut: () {
                         mapController.move(
                           mapController.center,
                           mapController.zoom - 1.0,
                         );
                       },
-                      child: const Icon(Icons.remove),
-                      tooltip: 'Alejar',
                     ),
                   ],
                 ),
               ),
             ],
           ),
-          
+
           const SizedBox(height: 8),
-          
+
           ElevatedButton.icon(
             onPressed: () async {
               await _cargarUbicacionActual();
+              if (!mounted) return;
               if (_selectedLocation != null) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Ubicación actual marcada')),
+                  const SnackBar(content: Text('Ubicaci?n actual marcada')),
                 );
               }
             },
             icon: const Icon(Icons.my_location),
-            label: const Text('Usar ubicación actual'),
+            label: const Text('Usar ubicaci?n actual'),
           ),
-          
+
           const SizedBox(height: 8),
-          
+
           Text(
-            'Ubicación seleccionada: ${_selectedLocation != null ? '${_selectedLocation!.latitude.toStringAsFixed(4)}, ${_selectedLocation!.longitude.toStringAsFixed(4)}' : 'Ninguna'}',
+            'Ubicaci?n seleccionada: ${_selectedLocation != null ? '${_selectedLocation!.latitude.toStringAsFixed(4)}, ${_selectedLocation!.longitude.toStringAsFixed(4)}' : 'Ninguna'}',
             style: const TextStyle(fontStyle: FontStyle.italic),
           ),
-          
+
           const SizedBox(height: 16),
-          
-          Text('Tipo de alerta:', style: Theme.of(context).textTheme.titleMedium),
-          
+
+          Text(
+            'Tipo de alerta:',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+
           const SizedBox(height: 8),
-          
+
           Wrap(
             spacing: 8,
             runSpacing: 8,
-            children: _tiposAlertas.entries.map((entry) {
-              return ChoiceChip(
-                label: Text(entry.value['titulo'] as String),
-                selected: _selectedTipoAlerta == entry.key,
-                onSelected: (selected) {
-                  if (selected) {
-                    setState(() {
-                      _selectedTipoAlerta = entry.key;
-                    });
-                  }
-                },
-                avatar: Icon(entry.value['icono'] as IconData),
-                selectedColor: (entry.value['color'] as Color).withAlpha(50),
-              );
-            }).toList(),
+            children:
+                _tiposAlertas.entries.map((entry) {
+                  return ChoiceChip(
+                    label: Text(entry.value['titulo'] as String),
+                    selected: _selectedTipoAlerta == entry.key,
+                    onSelected: (selected) {
+                      if (selected) {
+                        setState(() {
+                          _selectedTipoAlerta = entry.key;
+                        });
+                      }
+                    },
+                    avatar: Icon(entry.value['icono'] as IconData),
+                    selectedColor: (entry.value['color'] as Color).withAlpha(
+                      50,
+                    ),
+                  );
+                }).toList(),
           ),
-          
+
           const SizedBox(height: 16),
-          
+
           TextField(
             controller: _descripcionController,
             decoration: const InputDecoration(
-              labelText: 'Descripción (opcional)',
+              labelText: 'Descripci?n (opcional)',
               border: OutlineInputBorder(),
             ),
             maxLines: 3,
           ),
-          
+
           const SizedBox(height: 16),
-          
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: _pickImage,
-                  icon: const Icon(Icons.camera_alt),
-                  label: const Text('Tomar foto (opcional)'),
-                ),
-              ),
-            ],
-          ),
-          
-          if (_selectedImage != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(
-                'Foto seleccionada: ${_selectedImage!.path.split('/').last}',
-                style: const TextStyle(
-                  fontStyle: FontStyle.italic,
-                  color: Colors.green,
-                ),
-              ),
-            ),
-          
-          const SizedBox(height: 16),
-          
+
           SwitchListTile(
             title: const Text('Compartir con otros camioneros'),
             value: _compartirConOtros,
             onChanged: (value) => setState(() => _compartirConOtros = value),
             subtitle: const Text('Permite que otros vean esta alerta'),
           ),
-          
+
           const SizedBox(height: 24),
-          
+
           ElevatedButton.icon(
             onPressed: _isSendingAlert ? null : _crearAlerta,
-            icon: _isSendingAlert 
-                ? const SizedBox(
-                    width: 20, 
-                    height: 20, 
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ) 
-                : const Icon(Icons.send),
+            icon:
+                _isSendingAlert
+                    ? const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                    : const Icon(Icons.send),
             label: Text(_isSendingAlert ? 'Enviando...' : 'Enviar Alerta'),
             style: ElevatedButton.styleFrom(
               padding: const EdgeInsets.symmetric(vertical: 12),
@@ -628,17 +859,80 @@ class _AlertasScreenState extends State<AlertasScreen> with SingleTickerProvider
       ),
     );
   }
-  
+
   String _formatTimeDifference(DateTime timestamp) {
     final now = DateTime.now();
     final difference = now.difference(timestamp);
-    
+
     if (difference.inMinutes < 60) {
       return 'Hace ${difference.inMinutes} min';
     } else if (difference.inHours < 24) {
       return 'Hace ${difference.inHours} h';
     } else {
-      return 'Hace ${difference.inDays} días';
+      return 'Hace ${difference.inDays} d?as';
     }
   }
-} 
+
+  void _mostrarDetalleAlerta(AlertaSeguridad alerta) {
+    final meta = OperationalAlertMeta.fromType(alerta.tipo);
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder:
+          (context) => Material(
+            elevation: 14,
+            borderRadius: const BorderRadius.vertical(
+              top: Radius.circular(AppSpacing.sheetRadius),
+            ),
+            color: Theme.of(context).colorScheme.surface,
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  AppSpacing.sm,
+                  AppSpacing.lg,
+                  AppSpacing.lg,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 42,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: Theme.of(context).dividerColor,
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    Text(
+                      meta.label,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      alerta.descripcion ?? 'Sin descripci?n operativa',
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    Text(
+                      _formatTimeDifference(alerta.timestamp),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+    );
+  }
+}

@@ -1,3 +1,41 @@
+import '../utils/geo_utils.dart';
+
+class GeoPointData {
+  final String name;
+  final String address;
+  final double lng;
+  final double lat;
+
+  GeoPointData({
+    required this.name,
+    required this.address,
+    required this.lng,
+    required this.lat,
+  });
+
+  factory GeoPointData.fromJson(Map<String, dynamic> json) {
+    final parsed = parseCoordinatesFromDynamic(json['coordinates']);
+    if (!parsed.isValid || parsed.coordinate == null) {
+      throw FormatException(parsed.error ?? 'Coordenadas inválidas');
+    }
+
+    return GeoPointData(
+      name: (json['name'] ?? '').toString(),
+      address: (json['address'] ?? '').toString(),
+      lng: parsed.coordinate!.lng,
+      lat: parsed.coordinate!.lat,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'name': name,
+      'address': address,
+      'coordinates': [lng, lat],
+    };
+  }
+}
+
 class Oportunidad {
   final String? id;
   final String titulo;
@@ -19,6 +57,8 @@ class Oportunidad {
   final String? requisitosEspeciales;
   final int? distanciaKm;
   final int? duracionEstimadaHoras;
+  final GeoPointData? origin;
+  final GeoPointData? destination;
 
   Oportunidad({
     this.id,
@@ -41,6 +81,8 @@ class Oportunidad {
     this.requisitosEspeciales,
     this.distanciaKm,
     this.duracionEstimadaHoras,
+    this.origin,
+    this.destination,
   });
 
   factory Oportunidad.fromJson(Map<String, dynamic> json) {
@@ -64,18 +106,32 @@ class Oportunidad {
       camioneroId = json['camioneroAsignado']['_id'] ?? json['camioneroAsignado']['id'];
     }
 
+    GeoPointData? parseGeoPoint(dynamic value) {
+      if (value is Map<String, dynamic>) {
+        try {
+          return GeoPointData.fromJson(value);
+        } catch (_) {
+          return null;
+        }
+      }
+      return null;
+    }
+
+    final origin = parseGeoPoint(json['origin']);
+    final destination = parseGeoPoint(json['destination']);
+
     return Oportunidad(
       id: json['_id'],
-      titulo: json['titulo'],
+      titulo: json['titulo'] ?? 'Oportunidad sin título',
       descripcion: json['descripcion'],
-      origen: json['origen'],
-      destino: json['destino'],
-      direccionCargue: json['direccionCargue'],
-      direccionDescargue: json['direccionDescargue'],
+      origen: origin?.name ?? json['origen'] ?? 'Origen sin nombre',
+      destino: destination?.name ?? json['destino'] ?? 'Destino sin nombre',
+      direccionCargue: origin?.address ?? json['direccionCargue'],
+      direccionDescargue: destination?.address ?? json['direccionDescargue'],
       fecha: DateTime.parse(json['fecha']),
       precio: (json['precio'] as num).toDouble(),
-      estado: json['estado'] ?? 'disponible',
-      finalizada: json['finalizada'] ?? false,
+      estado: json['estado'] == 'finalizada' ? 'entregada' : (json['estado'] ?? 'disponible'),
+      finalizada: (json['finalizada'] as bool?) ?? (json['estado'] == 'entregada'),
       contratista: contratistaId,
       camioneroAsignado: camioneroId,
       createdAt: json['createdAt'] != null ? DateTime.parse(json['createdAt']) : null,
@@ -85,6 +141,8 @@ class Oportunidad {
       requisitosEspeciales: json['requisitosEspeciales'],
       distanciaKm: json['distanciaKm'],
       duracionEstimadaHoras: json['duracionEstimadaHoras'],
+      origin: origin,
+      destination: destination,
     );
   }
 
@@ -94,6 +152,8 @@ class Oportunidad {
       'descripcion': descripcion,
       'origen': origen,
       'destino': destino,
+      if (origin != null) 'origin': origin!.toJson(),
+      if (destination != null) 'destination': destination!.toJson(),
       'direccionCargue': direccionCargue,
       'direccionDescargue': direccionDescargue,
       'fecha': fecha.toIso8601String(),
