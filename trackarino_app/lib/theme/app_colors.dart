@@ -3,6 +3,11 @@ import 'package:flutter/material.dart';
 /// Logistics platform palette — graphite surfaces, deep green primary.
 abstract final class AppColors {
   // Brand
+  static const Color inkBlack = Color(0xFF05080B);
+  static const Color emerald300 = Color(0xFF6EE7B7);
+  static const Color emerald400 = Color(0xFF34D399);
+  static const Color emerald500 = Color(0xFF10B981);
+  static const Color emerald700 = Color(0xFF047857);
   static const Color deepGreen = Color(0xFF1B5E3B);
   static const Color deepGreenLight = Color(0xFF2D7A52);
   static const Color deepGreenDark = Color(0xFF0F3D26);
@@ -14,6 +19,8 @@ abstract final class AppColors {
   static const Color graphite700 = Color(0xFF374151);
   static const Color graphite800 = Color(0xFF1F2937);
   static const Color graphite900 = Color(0xFF111827);
+  static const Color graphite950 = Color(0xFF0B1117);
+  static const Color graphite300 = Color(0xFFCBD5E1);
 
   // Surfaces (dark)
   static const Color darkSurface = Color(0xFF1A1D21);

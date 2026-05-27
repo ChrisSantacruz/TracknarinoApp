@@ -7,12 +7,13 @@ const soloRol = require('../middleware/rolMiddleware');
 // Registrar vehículo del camionero
 router.post('/registrar', verificarToken, soloRol('camionero'), async (req, res) => {
   try {
-    const { tipoVehiculo, capacidadCarga, marca, modelo, placa, papelesAlDia } = req.body;
+    const { tipoVehiculo, capacidadCarga, unidadCapacidad, marca, modelo, placa, papelesAlDia } = req.body;
 
     const vehiculo = new Vehiculo({
       camioneroId: req.usuario.id,
       tipoVehiculo,
       capacidadCarga,
+      unidadCapacidad,
       marca,
       modelo,
       placa,

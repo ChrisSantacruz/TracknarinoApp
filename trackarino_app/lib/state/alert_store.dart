@@ -18,6 +18,7 @@ class AlertStore extends ChangeNotifier {
   AlertLoadStatus get status => _status;
   String? get errorMessage => _errorMessage;
   int get alertCount => _alerts.length;
+  int get unreadBump => _unreadBump;
 
   void mergeFromRealtime(RealtimeAlertUpdate update) {
     final alert = update.alert;

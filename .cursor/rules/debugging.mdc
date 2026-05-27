@@ -1,0 +1,23 @@
+---
+description: Debugging process for permanent fixes across frontend, backend, and data
+alwaysApply: true
+---
+
+# Debugging Rules
+
+Before modifying code:
+1. Detect root cause
+2. Analyze architecture impact
+3. Check state management
+4. Check async issues
+5. Check API contracts
+6. Check database consistency
+
+Never apply temporary fixes.
+
+Always:
+- Explain root cause
+- Explain impact
+- Apply permanent solution
+- Verify related screens
+- Verify related endpoints

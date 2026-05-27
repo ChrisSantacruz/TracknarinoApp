@@ -1,0 +1,27 @@
+---
+description: Routing, GPS, incidents, and map behavior rules
+globs: trackarino_app/lib/**/*.dart,Backend/**/*.js
+alwaysApply: false
+---
+
+# Routing & Maps Rules
+
+Routing system must:
+- Detect road obstacles
+- Recalculate routes dynamically
+- Avoid dangerous zones
+- Prioritize shortest SAFE route
+- Support live rerouting
+- Handle GPS inaccuracies
+- Handle lost signal scenarios
+
+Never:
+- Keep stale routes
+- Ignore route incidents
+- Use static path calculations
+
+Implement:
+- Route recalculation engine
+- Traffic-aware logic
+- Incident-aware rerouting
+- Fallback GPS handling

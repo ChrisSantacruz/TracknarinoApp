@@ -138,10 +138,7 @@ class OperationalDegradedRouteSegmentsLayer extends StatelessWidget {
 class OperationalRerouteCandidateLayer extends StatelessWidget {
   final List<LatLng> points;
 
-  const OperationalRerouteCandidateLayer({
-    super.key,
-    required this.points,
-  });
+  const OperationalRerouteCandidateLayer({super.key, required this.points});
 
   @override
   Widget build(BuildContext context) {
@@ -187,8 +184,8 @@ class OperationalRouteHealthChip extends StatelessWidget {
         rerouteRecommended
             ? 'Reruta recomendada'
             : corridorAlertCount > 0
-                ? '$corridorAlertCount alerta(s) en corredor'
-                : _deviationLabel(deviation);
+            ? '$corridorAlertCount alerta(s) en corredor'
+            : _deviationLabel(deviation);
 
     return Material(
       elevation: 7,
@@ -215,9 +212,9 @@ class OperationalRouteHealthChip extends StatelessWidget {
               children: [
                 Text(
                   label,
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w900,
-                  ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w900),
                 ),
                 Text(
                   detail,
@@ -261,16 +258,16 @@ class OperationalVehiclePresenceMarker extends StatelessWidget {
         duration: const Duration(milliseconds: 180),
         curve: Curves.easeOutCubic,
         child: SizedBox(
-          width: 52,
-          height: 52,
+          width: 44,
+          height: 44,
           child: Stack(
             alignment: Alignment.center,
             children: [
               if (status == 'active' || status == 'en_ruta')
-                _OperationalPulse(color: color, size: 52),
+                _OperationalPulse(color: color, size: 44),
               Container(
-                width: 42,
-                height: 42,
+                width: 36,
+                height: 36,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   color: surface.withValues(alpha: 0.96),
@@ -293,8 +290,8 @@ class OperationalVehiclePresenceMarker extends StatelessWidget {
                 curve: Curves.easeOutCubic,
                 child: SvgPicture.string(
                   _navigationSvg(_hex(color), _hex(surface)),
-                  width: 26,
-                  height: 26,
+                  width: 22,
+                  height: 22,
                   semanticsLabel: semanticsLabel,
                 ),
               ),
@@ -302,8 +299,8 @@ class OperationalVehiclePresenceMarker extends StatelessWidget {
                 right: 5,
                 bottom: 5,
                 child: Container(
-                  width: 11,
-                  height: 11,
+                  width: 9,
+                  height: 9,
                   decoration: BoxDecoration(
                     color: color,
                     shape: BoxShape.circle,
@@ -331,8 +328,8 @@ class OperationalDestinationMarker extends StatelessWidget {
     return Semantics(
       label: label,
       child: Container(
-        width: 46,
-        height: 46,
+        width: 40,
+        height: 40,
         decoration: BoxDecoration(
           shape: BoxShape.circle,
           color: surface.withValues(alpha: 0.96),
@@ -348,8 +345,8 @@ class OperationalDestinationMarker extends StatelessWidget {
         child: Center(
           child: SvgPicture.string(
             _flagSvg,
-            width: 23,
-            height: 23,
+            width: 20,
+            height: 20,
             color: AppColors.mapMarkerDestination,
             semanticsLabel: label,
           ),
@@ -390,15 +387,15 @@ class OperationalAlertMarker extends StatelessWidget {
           duration: const Duration(milliseconds: 170),
           curve: Curves.easeOutCubic,
           child: SizedBox(
-            width: 52,
-            height: 52,
+            width: 44,
+            height: 44,
             child: Stack(
               alignment: Alignment.center,
               children: [
-                if (isCritical) _OperationalPulse(color: meta.color, size: 52),
+                if (isCritical) _OperationalPulse(color: meta.color, size: 44),
                 Container(
-                  width: 42,
-                  height: 42,
+                  width: 36,
+                  height: 36,
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
                     color: surface.withValues(alpha: 0.96),
@@ -420,8 +417,8 @@ class OperationalAlertMarker extends StatelessWidget {
                   child: Center(
                     child: SvgPicture.string(
                       meta.svg,
-                      width: 22,
-                      height: 22,
+                      width: 19,
+                      height: 19,
                       color: meta.color,
                       semanticsLabel: meta.label,
                     ),

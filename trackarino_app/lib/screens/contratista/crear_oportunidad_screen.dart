@@ -1,18 +1,34 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
 import 'package:intl/intl.dart';
+import 'package:latlong2/latlong.dart';
+
+import '../../data/narino_municipalities.dart';
+import '../../services/ors_service.dart';
 import '../../services/oportunidad_service.dart';
+import '../../theme/app_colors.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/operational/premium_operational_widgets.dart';
 
 class CrearOportunidadScreen extends StatefulWidget {
   final bool embedded;
+  final VoidCallback? onPublished;
 
-  const CrearOportunidadScreen({super.key, this.embedded = false});
+  const CrearOportunidadScreen({
+    super.key,
+    this.embedded = false,
+    this.onPublished,
+  });
 
   @override
   State<CrearOportunidadScreen> createState() => _CrearOportunidadScreenState();
 }
 
 class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
+  static const LatLng _defaultMapCenter = LatLng(1.2136, -77.2811);
+
   final _formKey = GlobalKey<FormState>();
+  final _routeMapController = MapController();
   final _tituloController = TextEditingController();
   final _descripcionController = TextEditingController();
   final _origenController = TextEditingController();
@@ -27,16 +43,18 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
   final _origenLngController = TextEditingController();
   final _destinoLatController = TextEditingController();
   final _destinoLngController = TextEditingController();
-  
+
   DateTime _fechaSeleccionada = DateTime.now().add(const Duration(days: 1));
   bool _isLoading = false;
+  bool _routeLoading = false;
+  bool _pickingOrigin = true;
   String _errorMessage = '';
-  
-  @override
-  void initState() {
-    super.initState();
-  }
-  
+  String _routeMessage =
+      'Toca el mapa para marcar origen y destino. La ruta se calcula antes de publicar.';
+  LatLng? _originPoint;
+  LatLng? _destinationPoint;
+  List<LatLng> _routePreview = [];
+
   @override
   void dispose() {
     _tituloController.dispose();
@@ -63,7 +81,122 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
     }
     return coordinate;
   }
-  
+
+  void _setRoutePoint(LatLng point) {
+    final nearestMunicipality = _nearestMunicipality(point);
+    setState(() {
+      if (_pickingOrigin) {
+        _originPoint = point;
+        _origenController.text = nearestMunicipality.name;
+        _origenLatController.text = point.latitude.toStringAsFixed(6);
+        _origenLngController.text = point.longitude.toStringAsFixed(6);
+        _pickingOrigin = false;
+      } else {
+        _destinationPoint = point;
+        _destinoController.text = nearestMunicipality.name;
+        _destinoLatController.text = point.latitude.toStringAsFixed(6);
+        _destinoLngController.text = point.longitude.toStringAsFixed(6);
+      }
+      _routeMessage =
+          _originPoint == null || _destinationPoint == null
+              ? 'Marca el punto ${_pickingOrigin ? 'de origen' : 'de destino'} para completar la ruta.'
+              : 'Calculando ruta rápida con el proveedor operativo...';
+    });
+
+    if (_originPoint != null && _destinationPoint != null) {
+      _calculateRoutePreview();
+    }
+  }
+
+  NarinoMunicipality _nearestMunicipality(LatLng point) {
+    final distance = const Distance();
+    return narinoMunicipalities.reduce((best, candidate) {
+      final bestDistance = distance(point, best.center);
+      final candidateDistance = distance(point, candidate.center);
+      return candidateDistance < bestDistance ? candidate : best;
+    });
+  }
+
+  void _selectMunicipality({
+    required NarinoMunicipality municipality,
+    required bool origin,
+  }) {
+    setState(() {
+      if (origin) {
+        _origenController.text = municipality.name;
+        if (_direccionCargueController.text.trim().isEmpty) {
+          _direccionCargueController.text = 'Centro de ${municipality.name}';
+        }
+        _originPoint = municipality.center;
+        _origenLatController.text = municipality.center.latitude
+            .toStringAsFixed(6);
+        _origenLngController.text = municipality.center.longitude
+            .toStringAsFixed(6);
+        _pickingOrigin = false;
+      } else {
+        _destinoController.text = municipality.name;
+        if (_direccionDescargueController.text.trim().isEmpty) {
+          _direccionDescargueController.text = 'Centro de ${municipality.name}';
+        }
+        _destinationPoint = municipality.center;
+        _destinoLatController.text = municipality.center.latitude
+            .toStringAsFixed(6);
+        _destinoLngController.text = municipality.center.longitude
+            .toStringAsFixed(6);
+      }
+      _routeMessage =
+          _originPoint == null || _destinationPoint == null
+              ? 'Municipio seleccionado. Puedes ajustar el punto tocando el mapa.'
+              : 'Calculando ruta rápida con el proveedor operativo...';
+    });
+
+    _routeMapController.move(municipality.center, 11.5);
+    if (_originPoint != null && _destinationPoint != null) {
+      _calculateRoutePreview();
+    }
+  }
+
+  Future<void> _calculateRoutePreview() async {
+    final origin = _originPoint;
+    final destination = _destinationPoint;
+    if (origin == null || destination == null) return;
+
+    setState(() {
+      _routeLoading = true;
+      _routeMessage = 'Calculando ruta más rápida disponible...';
+    });
+
+    try {
+      final routeData = await ORSService.obtenerRuta(origin, destination);
+      if (!mounted) return;
+      final points = List<LatLng>.from(routeData['coordinates'] as List);
+      final distance = routeData['distance'] as double?;
+      final duration = routeData['duration'] as int?;
+      setState(() {
+        _routePreview = points;
+        _routeMessage =
+            'Ruta validada${distance == null ? '' : ' · ${distance.toStringAsFixed(1)} km'}${duration == null ? '' : ' · ${_formattedDurationText(duration)}'}';
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _routePreview = [origin, destination];
+        _routeMessage =
+            'No se pudo validar la ruta ahora. Se guardarán los puntos para que el sistema recalcule y busque alternativa al iniciar el viaje.';
+      });
+    } finally {
+      if (mounted) setState(() => _routeLoading = false);
+    }
+  }
+
+  String _formattedDurationText(int minutes) {
+    if (minutes <= 0) return 'tiempo no disponible';
+    if (minutes < 60) return '$minutes min';
+    final hours = minutes ~/ 60;
+    final remaining = minutes % 60;
+    return remaining == 0 ? '$hours h' : '$hours h $remaining min';
+  }
+
   Future<void> _mostrarSelectorFecha() async {
     final fechaSeleccionada = await showDatePicker(
       context: context,
@@ -71,440 +204,820 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
       firstDate: DateTime.now(),
       lastDate: DateTime.now().add(const Duration(days: 365)),
     );
-    
-    if (fechaSeleccionada != null) {
-      final horaSeleccionada = await showTimePicker(
-        context: context,
-        initialTime: TimeOfDay.fromDateTime(_fechaSeleccionada),
-      );
-      
-      if (horaSeleccionada != null) {
-        setState(() {
-          _fechaSeleccionada = DateTime(
-            fechaSeleccionada.year,
-            fechaSeleccionada.month,
-            fechaSeleccionada.day,
-            horaSeleccionada.hour,
-            horaSeleccionada.minute,
-          );
-        });
-      }
-    }
-  }
-  
-  Future<void> _crearOportunidad() async {
-    if (_formKey.currentState!.validate()) {
-      setState(() {
-        _isLoading = true;
-        _errorMessage = '';
-      });
-      
-      try {
-        final double? precioParsed = double.tryParse(_precioController.text.replaceAll(',', ''));
-        final int? pesoCargaParsed = int.tryParse(_pesoCargaController.text);
-        
-        if (precioParsed == null || pesoCargaParsed == null) {
-          throw Exception('Precio o peso de carga inválido');
-        }
 
-        final origenLat = _parseCoordinate(_origenLatController.text, 'Latitud de origen', -90, 90);
-        final origenLng = _parseCoordinate(_origenLngController.text, 'Longitud de origen', -180, 180);
-        final destinoLat = _parseCoordinate(_destinoLatController.text, 'Latitud de destino', -90, 90);
-        final destinoLng = _parseCoordinate(_destinoLngController.text, 'Longitud de destino', -180, 180);
-        
-        // Crear un objeto completo con todos los campos necesarios
-        final data = {
-          'titulo': _tituloController.text.trim(),
-          'descripcion': _descripcionController.text.trim(),
-          'origen': _origenController.text.trim(),
-          'destino': _destinoController.text.trim(),
-          'origin': {
-            'name': _origenController.text.trim(),
-            'address': _direccionCargueController.text.trim(),
-            'coordinates': [origenLng, origenLat],
-          },
-          'destination': {
-            'name': _destinoController.text.trim(),
-            'address': _direccionDescargueController.text.trim(),
-            'coordinates': [destinoLng, destinoLat],
-          },
-          'direccionCargue': _direccionCargueController.text.trim(),
-          'direccionDescargue': _direccionDescargueController.text.trim(),
-          'fecha': _fechaSeleccionada.toIso8601String(),
-          'precio': precioParsed,
-          'pesoCarga': pesoCargaParsed,
-          'tipoCarga': _tipoCargaController.text.trim(),
-          'requisitosEspeciales': _requisitosController.text.isEmpty ? null : _requisitosController.text.trim(),
-          'estado': 'disponible',
-          'finalizada': false,
-        };
-        
-        final oportunidad = await OportunidadService.crearOportunidadCompleta(data);
-        
-        if (oportunidad != null) {
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Oportunidad creada correctamente')),
-            );
-            if (!widget.embedded) {
-              Navigator.of(context).pop();
-            }
-          }
-        } else {
-          setState(() {
-            _errorMessage = 'Error al crear la oportunidad';
-          });
-        }
-      } catch (e) {
-        setState(() {
-          _errorMessage = 'Error: ${e.toString()}';
-        });
-        print('Error detallado: $e');
-      } finally {
-        if (mounted) {
-          setState(() {
-            _isLoading = false;
-          });
-        }
-      }
-    }
-  }
+    if (fechaSeleccionada == null || !mounted) return;
 
-  Widget _buildCoordinateField({
-    required TextEditingController controller,
-    required String label,
-    required String hint,
-    required double min,
-    required double max,
-  }) {
-    return TextFormField(
-      controller: controller,
-      keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-      decoration: InputDecoration(
-        labelText: label,
-        hintText: hint,
-        border: const OutlineInputBorder(),
-      ),
-      validator: (value) {
-        final coordinate = double.tryParse((value ?? '').trim().replaceAll(',', '.'));
-        if (coordinate == null || coordinate < min || coordinate > max) {
-          return '$label inválida';
-        }
-        return null;
-      },
+    final horaSeleccionada = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(_fechaSeleccionada),
     );
+
+    if (horaSeleccionada == null) return;
+
+    setState(() {
+      _fechaSeleccionada = DateTime(
+        fechaSeleccionada.year,
+        fechaSeleccionada.month,
+        fechaSeleccionada.day,
+        horaSeleccionada.hour,
+        horaSeleccionada.minute,
+      );
+    });
+  }
+
+  Future<void> _crearOportunidad() async {
+    if (!_formKey.currentState!.validate()) {
+      setState(() {
+        _errorMessage =
+            'Completa los campos obligatorios marcados antes de publicar.';
+      });
+      return;
+    }
+    if (_originPoint == null || _destinationPoint == null) {
+      setState(() {
+        _errorMessage =
+            'Selecciona municipio de origen y destino, o marca ambos puntos en el mapa.';
+      });
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _errorMessage = '';
+    });
+
+    try {
+      final precioParsed = double.tryParse(
+        _precioController.text.replaceAll(',', ''),
+      );
+      final pesoCargaParsed = int.tryParse(_pesoCargaController.text);
+
+      if (precioParsed == null || pesoCargaParsed == null) {
+        throw Exception('Precio o peso de carga inválido');
+      }
+
+      final origenLat = _parseCoordinate(
+        _origenLatController.text,
+        'Latitud de origen',
+        -90,
+        90,
+      );
+      final origenLng = _parseCoordinate(
+        _origenLngController.text,
+        'Longitud de origen',
+        -180,
+        180,
+      );
+      final destinoLat = _parseCoordinate(
+        _destinoLatController.text,
+        'Latitud de destino',
+        -90,
+        90,
+      );
+      final destinoLng = _parseCoordinate(
+        _destinoLngController.text,
+        'Longitud de destino',
+        -180,
+        180,
+      );
+
+      final data = {
+        'titulo': _tituloController.text.trim(),
+        'descripcion': _descripcionController.text.trim(),
+        'origen': _origenController.text.trim(),
+        'destino': _destinoController.text.trim(),
+        'origin': {
+          'name': _origenController.text.trim(),
+          'address': _direccionCargueController.text.trim(),
+          'coordinates': [origenLng, origenLat],
+        },
+        'destination': {
+          'name': _destinoController.text.trim(),
+          'address': _direccionDescargueController.text.trim(),
+          'coordinates': [destinoLng, destinoLat],
+        },
+        'direccionCargue': _direccionCargueController.text.trim(),
+        'direccionDescargue': _direccionDescargueController.text.trim(),
+        'fecha': _fechaSeleccionada.toIso8601String(),
+        'precio': precioParsed,
+        'pesoCarga': pesoCargaParsed,
+        'tipoCarga': _tipoCargaController.text.trim(),
+        'requisitosEspeciales':
+            _requisitosController.text.isEmpty
+                ? null
+                : _requisitosController.text.trim(),
+        'estado': 'disponible',
+        'finalizada': false,
+      };
+
+      final oportunidad = await OportunidadService.crearOportunidadCompleta(
+        data,
+      );
+
+      if (!mounted) return;
+      if (oportunidad == null) {
+        setState(() => _errorMessage = 'No se pudo crear la carga.');
+        return;
+      }
+
+      if (widget.embedded) {
+        widget.onPublished?.call();
+      } else {
+        Navigator.of(context).pop();
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Carga publicada correctamente')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _errorMessage = e.toString().replaceFirst('Exception: ', '');
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Crear Oportunidad'),
-      ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : SingleChildScrollView(
-              padding: const EdgeInsets.all(16.0),
+    final content = PremiumGradientScaffold(
+      safeArea: !widget.embedded,
+      child: CustomScrollView(
+        slivers: [
+          if (!widget.embedded)
+            SliverAppBar(
+              pinned: true,
+              backgroundColor: Colors.transparent,
+              foregroundColor: Colors.white,
+              title: const Text('Nueva carga'),
+            ),
+          SliverPadding(
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            sliver: SliverToBoxAdapter(
               child: Form(
                 key: _formKey,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // Mensaje de error si existe
-                    if (_errorMessage.isNotEmpty)
-                      Container(
-                        padding: const EdgeInsets.all(10),
-                        margin: const EdgeInsets.only(bottom: 16),
-                        decoration: BoxDecoration(
-                          color: Colors.red.shade50,
-                          borderRadius: BorderRadius.circular(5),
-                        ),
-                        child: Text(
-                          _errorMessage,
-                          style: TextStyle(color: Colors.red.shade800),
-                          textAlign: TextAlign.center,
-                        ),
+                    PremiumScreenHeader(
+                      eyebrow: 'Contratista',
+                      title: 'Publicar carga real',
+                      subtitle:
+                          'Completa origen, destino y coordenadas para que el conductor pueda calcular ruta sin estados rotos.',
+                      trailing: IconButton.filledTonal(
+                        onPressed: _isLoading ? null : _mostrarSelectorFecha,
+                        icon: const Icon(Icons.event_rounded),
                       ),
-                    
-                    // Título
-                    TextFormField(
-                      controller: _tituloController,
-                      decoration: const InputDecoration(
-                        labelText: 'Título',
-                        hintText: 'Ej: Transporte de mercancía a Pasto',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Por favor ingrese un título';
-                        }
-                        return null;
-                      },
                     ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    // Descripción
-                    TextFormField(
-                      controller: _descripcionController,
-                      maxLines: 3,
-                      decoration: const InputDecoration(
-                        labelText: 'Descripción',
-                        hintText: 'Detalles adicionales de la carga',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Por favor ingrese una descripción';
-                        }
-                        return null;
-                      },
+                    const SizedBox(height: AppSpacing.lg),
+                    if (_errorMessage.isNotEmpty) ...[
+                      _ErrorBanner(message: _errorMessage),
+                      const SizedBox(height: AppSpacing.md),
+                    ],
+                    _ShipmentSummaryCard(
+                      title:
+                          _tituloController.text.trim().isEmpty
+                              ? 'Carga sin título'
+                              : _tituloController.text.trim(),
+                      route:
+                          '${_origenController.text.trim().isEmpty ? 'Origen' : _origenController.text.trim()} → ${_destinoController.text.trim().isEmpty ? 'Destino' : _destinoController.text.trim()}',
+                      date: DateFormat(
+                        'dd MMM yyyy, HH:mm',
+                      ).format(_fechaSeleccionada),
+                      price:
+                          _precioController.text.trim().isEmpty
+                              ? 'Valor pendiente'
+                              : '\$${_precioController.text.trim()}',
                     ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    // Tipo de carga
-                    TextFormField(
-                      controller: _tipoCargaController,
-                      decoration: const InputDecoration(
-                        labelText: 'Tipo de carga',
-                        hintText: 'Ej: Alimentos, muebles, materiales',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Por favor ingrese el tipo de carga';
-                        }
-                        return null;
-                      },
-                    ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    // Peso de carga
-                    TextFormField(
-                      controller: _pesoCargaController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Peso de la carga (toneladas)',
-                        hintText: 'Ej: 5',
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Por favor ingrese el peso';
-                        }
-                        try {
-                          int.parse(value);
-                        } catch (_) {
-                          return 'Ingrese un valor numérico válido';
-                        }
-                        return null;
-                      },
-                    ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    // Origen
-                    TextFormField(
-                      controller: _origenController,
-                      decoration: const InputDecoration(
-                        labelText: 'Ciudad de origen',
-                        hintText: 'Ciudad de origen',
-                        prefixIcon: Icon(Icons.location_on_outlined),
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Por favor ingrese la ciudad de origen';
-                        }
-                        return null;
-                      },
-                    ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    // Dirección de cargue
-                    TextFormField(
-                      controller: _direccionCargueController,
-                      decoration: const InputDecoration(
-                        labelText: 'Dirección exacta de cargue',
-                        hintText: 'Dirección completa para recoger',
-                        prefixIcon: Icon(Icons.home_outlined),
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Por favor ingrese la dirección de cargue';
-                        }
-                        return null;
-                      },
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildCoordinateField(
-                            controller: _origenLatController,
-                            label: 'Latitud origen',
-                            hint: 'Ej: 1.2136',
-                            min: -90,
-                            max: 90,
+                    const SizedBox(height: AppSpacing.md),
+                    PremiumGlassCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _SectionTitle(
+                            title: 'Carga',
+                            subtitle: 'Información visible para camioneros.',
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildCoordinateField(
-                            controller: _origenLngController,
-                            label: 'Longitud origen',
-                            hint: 'Ej: -77.2811',
-                            min: -180,
-                            max: 180,
+                          const SizedBox(height: AppSpacing.md),
+                          PremiumTextField(
+                            controller: _tituloController,
+                            label: 'Título',
+                            hint: 'Ej: Lácteos hacia Pasto',
+                            icon: Icons.inventory_2_outlined,
+                            validator: _required('Ingresa un título'),
                           ),
-                        ),
-                      ],
-                    ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    // Destino
-                    TextFormField(
-                      controller: _destinoController,
-                      decoration: const InputDecoration(
-                        labelText: 'Ciudad de destino',
-                        hintText: 'Ciudad de destino',
-                        prefixIcon: Icon(Icons.location_on),
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Por favor ingrese la ciudad de destino';
-                        }
-                        return null;
-                      },
-                    ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    // Dirección de descargue
-                    TextFormField(
-                      controller: _direccionDescargueController,
-                      decoration: const InputDecoration(
-                        labelText: 'Dirección exacta de descargue',
-                        hintText: 'Dirección completa para entregar',
-                        prefixIcon: Icon(Icons.home),
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Por favor ingrese la dirección de descargue';
-                        }
-                        return null;
-                      },
-                    ),
-
-                    const SizedBox(height: 16),
-
-                    Row(
-                      children: [
-                        Expanded(
-                          child: _buildCoordinateField(
-                            controller: _destinoLatController,
-                            label: 'Latitud destino',
-                            hint: 'Ej: 3.4516',
-                            min: -90,
-                            max: 90,
+                          const SizedBox(height: AppSpacing.md),
+                          PremiumTextField(
+                            controller: _tipoCargaController,
+                            label: 'Tipo de carga',
+                            hint: 'Alimentos, materiales, muebles',
+                            icon: Icons.category_outlined,
+                            validator: _required('Ingresa el tipo de carga'),
                           ),
-                        ),
-                        const SizedBox(width: 12),
-                        Expanded(
-                          child: _buildCoordinateField(
-                            controller: _destinoLngController,
-                            label: 'Longitud destino',
-                            hint: 'Ej: -76.5320',
-                            min: -180,
-                            max: 180,
+                          const SizedBox(height: AppSpacing.md),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: PremiumTextField(
+                                  controller: _pesoCargaController,
+                                  label: 'Peso toneladas',
+                                  icon: Icons.scale_outlined,
+                                  keyboardType: TextInputType.number,
+                                  validator: _positiveInt(
+                                    'Ingresa un peso válido',
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: AppSpacing.sm),
+                              Expanded(
+                                child: PremiumTextField(
+                                  controller: _precioController,
+                                  label: 'Precio COP',
+                                  icon: Icons.payments_outlined,
+                                  keyboardType: TextInputType.number,
+                                  validator: _moneyValidator,
+                                ),
+                              ),
+                            ],
                           ),
-                        ),
-                      ],
-                    ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    // Requisitos especiales
-                    TextFormField(
-                      controller: _requisitosController,
-                      decoration: const InputDecoration(
-                        labelText: 'Requisitos especiales (opcional)',
-                        hintText: 'Ej: Refrigeración, carga frágil',
-                        border: OutlineInputBorder(),
+                          const SizedBox(height: AppSpacing.md),
+                          PremiumTextField(
+                            controller: _descripcionController,
+                            label: 'Descripción',
+                            icon: Icons.notes_outlined,
+                            maxLines: 3,
+                            validator: _required('Ingresa una descripción'),
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          PremiumTextField(
+                            controller: _requisitosController,
+                            label: 'Requisitos especiales',
+                            hint: 'Opcional',
+                            icon: Icons.rule_folder_outlined,
+                          ),
+                        ],
                       ),
                     ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    // Fecha
-                    InkWell(
-                      onTap: _mostrarSelectorFecha,
-                      child: InputDecorator(
-                        decoration: const InputDecoration(
-                          labelText: 'Fecha de entrega',
-                          prefixIcon: Icon(Icons.calendar_today),
-                          border: OutlineInputBorder(),
-                        ),
-                        child: Text(
-                          DateFormat('dd/MM/yyyy HH:mm').format(_fechaSeleccionada),
-                          style: const TextStyle(fontSize: 16),
-                        ),
+                    const SizedBox(height: AppSpacing.md),
+                    PremiumGlassCard(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          _SectionTitle(
+                            title: 'Ruta operativa',
+                            subtitle:
+                                'Elige municipios de Nariño para marcarlos automáticamente o ajusta los puntos tocando el mapa.',
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          _RouteMapPicker(
+                            origin: _originPoint,
+                            destination: _destinationPoint,
+                            routePreview: _routePreview,
+                            pickingOrigin: _pickingOrigin,
+                            loading: _routeLoading,
+                            message: _routeMessage,
+                            mapController: _routeMapController,
+                            onPickModeChanged:
+                                (value) =>
+                                    setState(() => _pickingOrigin = value),
+                            onTap: _setRoutePoint,
+                          ),
+                          const SizedBox(height: AppSpacing.lg),
+                          _LocationBlock(
+                            title: 'Origen',
+                            cityController: _origenController,
+                            addressController: _direccionCargueController,
+                            latController: _origenLatController,
+                            lngController: _origenLngController,
+                            color: AppColors.emerald400,
+                            onMunicipalitySelected:
+                                (municipality) => _selectMunicipality(
+                                  municipality: municipality,
+                                  origin: true,
+                                ),
+                          ),
+                          const SizedBox(height: AppSpacing.lg),
+                          _LocationBlock(
+                            title: 'Destino',
+                            cityController: _destinoController,
+                            addressController: _direccionDescargueController,
+                            latController: _destinoLatController,
+                            lngController: _destinoLngController,
+                            color: AppColors.alertCritical,
+                            onMunicipalitySelected:
+                                (municipality) => _selectMunicipality(
+                                  municipality: municipality,
+                                  origin: false,
+                                ),
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          InkWell(
+                            onTap: _mostrarSelectorFecha,
+                            borderRadius: BorderRadius.circular(18),
+                            child: InputDecorator(
+                              decoration: const InputDecoration(
+                                labelText: 'Fecha de entrega',
+                                prefixIcon: Icon(Icons.calendar_today_outlined),
+                                suffixIcon: Icon(Icons.expand_more_rounded),
+                              ),
+                              child: Text(
+                                DateFormat(
+                                  'dd/MM/yyyy HH:mm',
+                                ).format(_fechaSeleccionada),
+                                style: const TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                    
-                    const SizedBox(height: 16),
-                    
-                    // Precio
-                    TextFormField(
-                      controller: _precioController,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(
-                        labelText: 'Precio (COP)',
-                        hintText: 'Valor a pagar al transportador',
-                        prefixIcon: Icon(Icons.attach_money),
-                        border: OutlineInputBorder(),
-                      ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Por favor ingrese el precio';
-                        }
-                        try {
-                          double.parse(value.replaceAll(',', ''));
-                        } catch (_) {
-                          return 'Ingrese un valor numérico válido';
-                        }
-                        return null;
-                      },
+                    const SizedBox(height: AppSpacing.xl),
+                    PremiumPrimaryButton(
+                      label: 'Publicar carga',
+                      icon: Icons.cloud_upload_outlined,
+                      loading: _isLoading,
+                      onPressed: _isLoading ? null : _crearOportunidad,
                     ),
-                    
-                    const SizedBox(height: 24),
-                    
-                    // Botón para crear oportunidad
-                    ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(context).primaryColor,
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 15),
-                        shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                      ),
-                      onPressed: _crearOportunidad,
-                      child: const Text('CREAR OPORTUNIDAD'),
-                    ),
+                    const SizedBox(height: AppSpacing.xxl),
                   ],
                 ),
               ),
             ),
+          ),
+        ],
+      ),
+    );
+
+    if (widget.embedded) return content;
+    return content;
+  }
+
+  String? Function(String?) _required(String message) {
+    return (value) {
+      if (value == null || value.trim().isEmpty) return message;
+      return null;
+    };
+  }
+
+  String? Function(String?) _positiveInt(String message) {
+    return (value) {
+      final parsed = int.tryParse(value?.trim() ?? '');
+      if (parsed == null || parsed <= 0) return message;
+      return null;
+    };
+  }
+
+  String? _moneyValidator(String? value) {
+    final parsed = double.tryParse((value ?? '').replaceAll(',', ''));
+    if (parsed == null || parsed <= 0) return 'Ingresa un precio válido';
+    return null;
+  }
+}
+
+class _RouteMapPicker extends StatelessWidget {
+  final LatLng? origin;
+  final LatLng? destination;
+  final List<LatLng> routePreview;
+  final bool pickingOrigin;
+  final bool loading;
+  final String message;
+  final MapController mapController;
+  final ValueChanged<bool> onPickModeChanged;
+  final ValueChanged<LatLng> onTap;
+
+  const _RouteMapPicker({
+    required this.origin,
+    required this.destination,
+    required this.routePreview,
+    required this.pickingOrigin,
+    required this.loading,
+    required this.message,
+    required this.mapController,
+    required this.onPickModeChanged,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final markers = <Marker>[
+      if (origin != null)
+        Marker(
+          point: origin!,
+          width: 42,
+          height: 42,
+          builder:
+              (_) =>
+                  _MapPin(color: AppColors.emerald400, icon: Icons.trip_origin),
+        ),
+      if (destination != null)
+        Marker(
+          point: destination!,
+          width: 42,
+          height: 42,
+          builder:
+              (_) => _MapPin(color: AppColors.alertCritical, icon: Icons.flag),
+        ),
+    ];
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          height: 260,
+          clipBehavior: Clip.antiAlias,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+          ),
+          child: Stack(
+            children: [
+              FlutterMap(
+                mapController: mapController,
+                options: MapOptions(
+                  center:
+                      origin ??
+                      destination ??
+                      _CrearOportunidadScreenState._defaultMapCenter,
+                  zoom: 11.5,
+                  onTap: (_, point) => onTap(point),
+                ),
+                children: [
+                  TileLayer(
+                    urlTemplate:
+                        'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    subdomains: const ['a', 'b', 'c'],
+                  ),
+                  if (routePreview.length > 1)
+                    PolylineLayer(
+                      polylines: [
+                        Polyline(
+                          points: routePreview,
+                          strokeWidth: 5,
+                          color: AppColors.emerald400.withValues(alpha: 0.82),
+                        ),
+                      ],
+                    ),
+                  MarkerLayer(markers: markers),
+                ],
+              ),
+              Positioned(
+                left: AppSpacing.sm,
+                right: AppSpacing.sm,
+                top: AppSpacing.sm,
+                child: _MapPickerToolbar(
+                  pickingOrigin: pickingOrigin,
+                  onPickModeChanged: onPickModeChanged,
+                ),
+              ),
+              if (loading)
+                Positioned.fill(
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: AppColors.inkBlack.withValues(alpha: 0.28),
+                    ),
+                    child: const Center(
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        PremiumInfoRow(
+          icon: Icons.route_outlined,
+          label: 'Ruta asistida',
+          value: message,
+          color: AppColors.emerald400,
+        ),
+      ],
     );
   }
-} 
+}
+
+class _MapPickerToolbar extends StatelessWidget {
+  final bool pickingOrigin;
+  final ValueChanged<bool> onPickModeChanged;
+
+  const _MapPickerToolbar({
+    required this.pickingOrigin,
+    required this.onPickModeChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.graphite950.withValues(alpha: 0.88),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(6),
+        child: Row(
+          children: [
+            Expanded(
+              child: _PickerModeButton(
+                label: 'Marcar origen',
+                selected: pickingOrigin,
+                color: AppColors.emerald400,
+                onTap: () => onPickModeChanged(true),
+              ),
+            ),
+            const SizedBox(width: 6),
+            Expanded(
+              child: _PickerModeButton(
+                label: 'Marcar destino',
+                selected: !pickingOrigin,
+                color: AppColors.alertCritical,
+                onTap: () => onPickModeChanged(false),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _PickerModeButton extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _PickerModeButton({
+    required this.label,
+    required this.selected,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(14),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 160),
+        padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+        decoration: BoxDecoration(
+          color:
+              selected
+                  ? color.withValues(alpha: 0.2)
+                  : Colors.white.withValues(alpha: 0.04),
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(
+            color:
+                selected
+                    ? color.withValues(alpha: 0.65)
+                    : Colors.white.withValues(alpha: 0.06),
+          ),
+        ),
+        child: Text(
+          label,
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            color: selected ? color : AppColors.graphite300,
+            fontWeight: FontWeight.w900,
+            fontSize: 12,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _MapPin extends StatelessWidget {
+  final Color color;
+  final IconData icon;
+
+  const _MapPin({required this.color, required this.icon});
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.graphite950,
+        shape: BoxShape.circle,
+        border: Border.all(color: color, width: 2),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.35),
+            blurRadius: 18,
+            spreadRadius: 2,
+          ),
+        ],
+      ),
+      child: Icon(icon, color: color, size: 22),
+    );
+  }
+}
+
+class _LocationBlock extends StatelessWidget {
+  final String title;
+  final TextEditingController cityController;
+  final TextEditingController addressController;
+  final TextEditingController latController;
+  final TextEditingController lngController;
+  final Color color;
+  final ValueChanged<NarinoMunicipality> onMunicipalitySelected;
+
+  const _LocationBlock({
+    required this.title,
+    required this.cityController,
+    required this.addressController,
+    required this.latController,
+    required this.lngController,
+    required this.color,
+    required this.onMunicipalitySelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        PremiumStatusPill(label: title, color: color),
+        const SizedBox(height: AppSpacing.md),
+        _MunicipalitySelector(
+          selectedName: cityController.text,
+          label: 'Municipio de Nariño',
+          onSelected: onMunicipalitySelected,
+        ),
+        const SizedBox(height: AppSpacing.md),
+        PremiumTextField(
+          controller: addressController,
+          label: 'Dirección / punto de referencia',
+          hint: 'Opcional si usas el centro del municipio',
+          icon: Icons.pin_drop_outlined,
+        ),
+        const SizedBox(height: AppSpacing.md),
+        PremiumInfoRow(
+          icon: Icons.gps_fixed_rounded,
+          label: 'Coordenada seleccionada',
+          value:
+              latController.text.trim().isEmpty ||
+                      lngController.text.trim().isEmpty
+                  ? 'Pendiente: marca el punto en el mapa'
+                  : '${latController.text}, ${lngController.text}',
+          color: color,
+        ),
+      ],
+    );
+  }
+}
+
+class _MunicipalitySelector extends StatelessWidget {
+  final String selectedName;
+  final String label;
+  final ValueChanged<NarinoMunicipality> onSelected;
+
+  const _MunicipalitySelector({
+    required this.selectedName,
+    required this.label,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final selected =
+        narinoMunicipalities
+            .where((municipality) => municipality.name == selectedName)
+            .firstOrNull;
+
+    return DropdownButtonFormField<NarinoMunicipality>(
+      initialValue: selected,
+      isExpanded: true,
+      dropdownColor: AppColors.graphite900,
+      decoration: InputDecoration(
+        labelText: label,
+        prefixIcon: const Icon(Icons.location_city_outlined),
+      ),
+      items:
+          narinoMunicipalities
+              .map(
+                (municipality) => DropdownMenuItem(
+                  value: municipality,
+                  child: Text(
+                    municipality.name,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              )
+              .toList(),
+      validator:
+          (value) => value == null ? 'Selecciona un municipio de Nariño' : null,
+      onChanged: (value) {
+        if (value != null) onSelected(value);
+      },
+    );
+  }
+}
+
+class _ShipmentSummaryCard extends StatelessWidget {
+  final String title;
+  final String route;
+  final String date;
+  final String price;
+
+  const _ShipmentSummaryCard({
+    required this.title,
+    required this.route,
+    required this.date,
+    required this.price,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return PremiumGlassCard(
+      borderColor: AppColors.emerald400.withValues(alpha: 0.28),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          PremiumInfoRow(
+            icon: Icons.route_outlined,
+            label: 'Ruta',
+            value: route,
+            color: AppColors.emerald400,
+          ),
+          PremiumInfoRow(
+            icon: Icons.schedule_outlined,
+            label: 'Entrega',
+            value: date,
+            color: AppColors.statusSyncing,
+          ),
+          PremiumInfoRow(
+            icon: Icons.payments_outlined,
+            label: 'Pago',
+            value: price,
+            color: AppColors.statusActive,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SectionTitle extends StatelessWidget {
+  final String title;
+  final String subtitle;
+
+  const _SectionTitle({required this.title, required this.subtitle});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          subtitle,
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: AppColors.graphite300),
+        ),
+      ],
+    );
+  }
+}
+
+class _ErrorBanner extends StatelessWidget {
+  final String message;
+
+  const _ErrorBanner({required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    return PremiumGlassCard(
+      borderColor: AppColors.alertCritical.withValues(alpha: 0.35),
+      child: PremiumInfoRow(
+        icon: Icons.error_outline_rounded,
+        label: 'No se pudo publicar',
+        value: message,
+        color: AppColors.alertCritical,
+      ),
+    );
+  }
+}

@@ -4,10 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:latlong2/latlong.dart' as latlong;
+import 'package:url_launcher/url_launcher.dart';
 
 import '../../models/fleet_tracking_item.dart';
+import '../../models/trucker_place.dart';
 import '../../map/operational_map_intelligence.dart';
 import '../../services/contratista_tracking_service.dart';
+import '../../services/narino_trucker_places_service.dart';
 import '../../services/polling_controller.dart';
 import '../../services/realtime_service.dart';
 import '../../theme/app_colors.dart';
@@ -15,7 +18,6 @@ import '../../theme/app_spacing.dart';
 import '../../widgets/operational/fleet_map_marker.dart';
 import '../../widgets/operational/map_control_cluster.dart';
 import '../../widgets/operational/operational_empty_state.dart';
-import '../../widgets/operational/operational_error_state.dart';
 import '../../widgets/operational/operational_map_primitives.dart';
 import '../../widgets/operational/operational_skeleton.dart';
 import '../../widgets/operational/operational_status_chip.dart';
@@ -58,7 +60,9 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
   final Set<String> _visibleStates = {'active', 'stale', 'offline'};
   bool _activeTripsOnly = false;
   bool _showFleetDensity = false;
+  bool _showTruckerPlaces = true;
   bool _followSelectedVehicle = true;
+  List<TruckerPlace> _truckerPlaces = [];
   latlong.LatLng _mapCenter = _defaultCenter;
   double _mapZoom = 12;
   DateTime? _lastViewportUpdateAt;
@@ -70,6 +74,7 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
     super.initState();
     _wireRealtime();
     _loadFleet(initial: true);
+    _loadTruckerPlaces();
     _startPolling(socketHealthy: false);
     _realtime.connect();
   }
@@ -156,8 +161,7 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
         if (existing != null) {
           final existingTs = existing['ultimaActualizacion'] as DateTime?;
           if (existingTs != null && existingTs.isAfter(pollTimestamp)) {
-            camioneros[item.camioneroId] =
-                Map<String, dynamic>.from(existing);
+            camioneros[item.camioneroId] = Map<String, dynamic>.from(existing);
             continue;
           }
         }
@@ -177,6 +181,8 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
           'destino': item.destinoViaje,
           'carga': item.carga,
           'hasActiveTrip': item.hasActiveTrip,
+          'originPoint': item.originPoint,
+          'destinationPoint': item.destinationPoint,
         };
       }
 
@@ -214,6 +220,19 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
         _backgroundRefreshing = false;
         if (initial) _emptyMessage = '';
       });
+    }
+  }
+
+  Future<void> _loadTruckerPlaces() async {
+    try {
+      final places = await NarinoTruckerPlacesService.fetchPlaces(
+        categories: TruckerPlaceCategory.values.toSet(),
+      );
+      if (!mounted) return;
+      setState(() => _truckerPlaces = places);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _truckerPlaces = []);
     }
   }
 
@@ -334,6 +353,41 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
     return _camioneros[id];
   }
 
+  List<latlong.LatLng> _selectedRoutePoints(Map<String, dynamic>? camionero) {
+    if (camionero == null || camionero['hasActiveTrip'] != true) {
+      return const [];
+    }
+    final current = camionero['ubicacion'] as latlong.LatLng?;
+    final destination = camionero['destinationPoint'] as dynamic;
+    if (current == null || destination == null) return const [];
+    return [
+      current,
+      latlong.LatLng(destination.lat as double, destination.lng as double),
+    ];
+  }
+
+  String? _normalizedPhone(Map<String, dynamic> camionero) {
+    final raw = (camionero['telefono'] ?? '').toString();
+    final digits = raw.replaceAll(RegExp(r'\D'), '');
+    if (digits.isEmpty) return null;
+    return digits.startsWith('57') ? digits : '57$digits';
+  }
+
+  Future<void> _launchPhone(Map<String, dynamic> camionero) async {
+    final phone = _normalizedPhone(camionero);
+    if (phone == null) return;
+    await launchUrl(Uri(scheme: 'tel', path: phone));
+  }
+
+  Future<void> _launchWhatsApp(Map<String, dynamic> camionero) async {
+    final phone = _normalizedPhone(camionero);
+    if (phone == null) return;
+    final uri = Uri.https('wa.me', '/$phone', {
+      'text': 'Hola, te contacto desde TrackNariño por tu viaje activo.',
+    });
+    await launchUrl(uri, mode: LaunchMode.externalApplication);
+  }
+
   void _seleccionarCamionero(String id) {
     setState(() {
       _camioneroSeleccionadoId = id;
@@ -424,7 +478,24 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
                           label: const Text('Ver en mapa'),
                         ),
                       ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: FilledButton.icon(
+                          onPressed: () => _launchWhatsApp(camionero),
+                          icon: const Icon(Icons.chat_outlined),
+                          label: const Text('WhatsApp'),
+                        ),
+                      ),
                     ],
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.tonalIcon(
+                      onPressed: () => _launchPhone(camionero),
+                      icon: const Icon(Icons.phone_outlined),
+                      label: Text('Llamar ${camionero['telefono']}'),
+                    ),
                   ),
                 ],
               ),
@@ -557,8 +628,8 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
     final clusterMarkers = plan.clusters.map((cluster) {
       return Marker(
         point: cluster.center,
-        width: 66,
-        height: 66,
+        width: 54,
+        height: 54,
         builder:
             (ctx) => OperationalFleetClusterMarker(
               cluster: cluster,
@@ -577,8 +648,8 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
 
       return Marker(
         point: point,
-        width: selected ? 52 : 48,
-        height: selected ? 52 : 48,
+        width: selected ? 46 : 42,
+        height: selected ? 46 : 42,
         builder:
             (ctx) => GestureDetector(
               onTap: () => _mostrarDetallesCamionero(camionero),
@@ -598,6 +669,38 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
     });
 
     return [...clusterMarkers, ...truckMarkers];
+  }
+
+  List<Marker> _buildTruckerPlaceMarkers() {
+    if (!_showTruckerPlaces) return const [];
+    return _truckerPlaces.map((place) {
+      return Marker(
+        point: latlong.LatLng(
+          place.position.latitude,
+          place.position.longitude,
+        ),
+        width: 34,
+        height: 34,
+        builder:
+            (_) => Tooltip(
+              message: '${place.category.label}: ${place.name}',
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: AppColors.graphite950.withValues(alpha: 0.94),
+                  shape: BoxShape.circle,
+                  border: Border.all(
+                    color: place.category.color.withValues(alpha: 0.78),
+                  ),
+                ),
+                child: Icon(
+                  place.category.icon,
+                  color: place.category.color,
+                  size: 18,
+                ),
+              ),
+            ),
+      );
+    }).toList();
   }
 
   void _toggleStateFilter(String status) {
@@ -774,6 +877,14 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
               color: AppColors.statusSyncing,
               onTap:
                   () => setState(() => _showFleetDensity = !_showFleetDensity),
+            ),
+            _booleanFilterChip(
+              selected: _showTruckerPlaces,
+              label: 'Servicios',
+              color: AppColors.emerald400,
+              onTap:
+                  () =>
+                      setState(() => _showTruckerPlaces = !_showTruckerPlaces),
             ),
           ],
         ),
@@ -1059,6 +1170,7 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
   @override
   Widget build(BuildContext context) {
     final selectedCamionero = _selectedCamionero;
+    final selectedRoute = _selectedRoutePoints(selectedCamionero);
     final fleetPlan = OperationalMapIntelligence.buildFleetPlan(
       camioneros:
           _activeTripsOnly
@@ -1092,7 +1204,14 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
               color: AppColors.deepGreen,
               visible: _showFleetDensity,
             ),
-            MarkerLayer(markers: _buildMarkers(fleetPlan)),
+            if (selectedRoute.length >= 2)
+              OperationalRouteLayer(points: selectedRoute),
+            MarkerLayer(
+              markers: [
+                ..._buildTruckerPlaceMarkers(),
+                ..._buildMarkers(fleetPlan),
+              ],
+            ),
           ],
         ),
         Positioned(
@@ -1113,18 +1232,12 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
         if (_initialLoading)
           const OperationalLoadingPanel(message: 'Cargando flota...'),
         if (!_initialLoading && _errorMessage.isNotEmpty)
-          Center(
-            child: Padding(
-              padding: const EdgeInsets.all(AppSpacing.lg),
-              child: Material(
-                elevation: 4,
-                borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
-                child: OperationalErrorState(
-                  message:
-                      'No se pudo sincronizar la flota. Revisa la conexión e inténtalo de nuevo.',
-                  onRetry: () => _loadFleet(initial: true),
-                ),
-              ),
+          Positioned(
+            left: AppSpacing.md,
+            right: AppSpacing.md,
+            bottom: 104,
+            child: _FleetSyncErrorCard(
+              onRetry: () => _loadFleet(initial: true),
             ),
           ),
         if (!_initialLoading &&
@@ -1199,6 +1312,69 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
             child: _buildSelectedTruckSheet(selectedCamionero),
           ),
       ],
+    );
+  }
+}
+
+class _FleetSyncErrorCard extends StatelessWidget {
+  final VoidCallback onRetry;
+
+  const _FleetSyncErrorCard({required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: AppColors.graphite950.withValues(alpha: 0.94),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(
+            color: AppColors.alertCritical.withValues(alpha: 0.22),
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.34),
+              blurRadius: 24,
+              offset: const Offset(0, 12),
+            ),
+          ],
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Row(
+            children: [
+              Container(
+                width: 42,
+                height: 42,
+                decoration: BoxDecoration(
+                  color: AppColors.alertCritical.withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(16),
+                ),
+                child: const Icon(
+                  Icons.sync_problem_rounded,
+                  color: AppColors.alertCritical,
+                ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Text(
+                  'No se pudo sincronizar la flota. El mapa queda disponible y se reintentará con polling/realtime.',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: AppColors.graphite300,
+                    height: 1.35,
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              FilledButton.tonal(
+                onPressed: onRetry,
+                child: const Text('Reintentar'),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }

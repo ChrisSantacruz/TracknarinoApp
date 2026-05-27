@@ -14,17 +14,19 @@ import 'dart:math' as math;
 import 'package:geolocator/geolocator.dart';
 import '../../models/oportunidad_model.dart';
 import '../../models/alerta_model.dart';
+import '../../models/trucker_place.dart';
 import '../../screens/camionero/alertas_screen.dart';
 import '../../screens/camionero/perfil_camionero_screen.dart';
 import '../../screens/camionero/oportunidades_screen.dart';
 import '../../screens/camionero/ruta_viaje_screen.dart';
+import '../../services/narino_trucker_places_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/operational/map_control_cluster.dart';
 import '../../widgets/operational/operational_map_primitives.dart';
-import '../../widgets/operational/operational_empty_state.dart';
 import '../../widgets/operational/operational_status_chip.dart';
 import '../../widgets/operational/operational_svg_icon.dart';
+import '../../widgets/operational/premium_operational_widgets.dart';
 import '../../widgets/viaje_activo_banner.dart';
 
 class CamioneroHomeScreen extends StatefulWidget {
@@ -46,6 +48,18 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
 
   bool _isFollowingUser = true;
   bool _isDisponible = false;
+  bool _showTruckerPlaces = true;
+  bool _placesLoading = false;
+  String? _placesError;
+  List<TruckerPlace> _truckerPlaces = [];
+  final Set<TruckerPlaceCategory> _selectedPlaceCategories = {
+    TruckerPlaceCategory.fuel,
+    TruckerPlaceCategory.tire,
+    TruckerPlaceCategory.mechanic,
+    TruckerPlaceCategory.parking,
+    TruckerPlaceCategory.food,
+    TruckerPlaceCategory.emergency,
+  };
 
   @override
   void initState() {
@@ -57,6 +71,8 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
       await context.read<TripStore>().refreshActiveTrip();
       await _initializeLocation();
       await _refreshAlerts();
+      _loadTruckerPlaces();
+      if (!mounted) return;
       final trip = context.read<TripStore>().activeTrip;
       if (trip != null) {
         await _ensureRouteForTrip(trip);
@@ -138,6 +154,54 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
     if (position != null && mounted) {
       await context.read<AlertStore>().refreshNearby(position);
     }
+  }
+
+  Future<void> _loadTruckerPlaces() async {
+    if (_selectedPlaceCategories.isEmpty) {
+      setState(() {
+        _truckerPlaces = [];
+        _placesError = null;
+      });
+      return;
+    }
+
+    setState(() {
+      _placesLoading = true;
+      _placesError = null;
+    });
+
+    try {
+      final places = await NarinoTruckerPlacesService.fetchPlaces(
+        categories: _selectedPlaceCategories,
+      );
+      if (!mounted) return;
+      final sorted = _sortPlacesForDriver(places);
+      setState(() {
+        _truckerPlaces = sorted;
+        _placesLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _placesLoading = false;
+        _placesError =
+            'No se pudieron cargar servicios de Nariño. Revisa conexión e intenta de nuevo.';
+      });
+    }
+  }
+
+  List<TruckerPlace> _sortPlacesForDriver(List<TruckerPlace> places) {
+    final current = _currentPosition;
+    if (current == null) return places;
+    final distance = const Distance();
+    final sorted = [...places];
+    sorted.sort(
+      (a, b) => distance(
+        current,
+        a.position,
+      ).compareTo(distance(current, b.position)),
+    );
+    return sorted;
   }
 
   // Iniciar el seguimiento de ubicación
@@ -235,13 +299,28 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
   @override
   Widget build(BuildContext context) {
     final tripStore = context.watch<TripStore>();
+    final alertStore = context.watch<AlertStore>();
     final viajeActivo = tripStore.activeTrip;
     final rutaActiva = tripStore.routePoints;
-    final alertas = context.watch<AlertStore>().alerts;
+    final alertas = alertStore.alerts;
+    final alertBadgeCount = alertStore.unreadBump;
 
     return Scaffold(
       appBar: AppBar(
-        title: Text(_appBarTitle()),
+        backgroundColor: AppColors.inkBlack.withValues(alpha: 0.96),
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shape: Border(
+          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+        ),
+        title: Text(
+          _appBarTitle(),
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
         actions: [
           if (alertas.isNotEmpty)
             Padding(
@@ -287,32 +366,85 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
           PerfilCamioneroScreen(usuario: widget.usuario, embedded: true),
         ],
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected:
-            (index) => setState(() => _selectedIndex = index),
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.map_outlined),
-            selectedIcon: Icon(Icons.map),
-            label: 'Mapa',
+      extendBody: false,
+      bottomNavigationBar: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md,
+          0,
+          AppSpacing.md,
+          AppSpacing.sm,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: NavigationBarTheme(
+            data: NavigationBarThemeData(
+              backgroundColor: AppColors.graphite950.withValues(alpha: 0.98),
+              indicatorColor: AppColors.emerald400.withValues(alpha: 0.18),
+              indicatorShape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+              labelTextStyle: WidgetStateProperty.resolveWith(
+                (states) => TextStyle(
+                  color:
+                      states.contains(WidgetState.selected)
+                          ? AppColors.emerald300
+                          : AppColors.graphite300,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 11,
+                ),
+              ),
+              iconTheme: WidgetStateProperty.resolveWith(
+                (states) => IconThemeData(
+                  color:
+                      states.contains(WidgetState.selected)
+                          ? AppColors.emerald300
+                          : AppColors.graphite300,
+                ),
+              ),
+            ),
+            child: NavigationBar(
+              height: 64,
+              elevation: 0,
+              labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+              selectedIndex: _selectedIndex,
+              onDestinationSelected: (index) {
+                setState(() => _selectedIndex = index);
+                if (index == 2) {
+                  context.read<AlertStore>().clearUnreadBump();
+                }
+              },
+              destinations: [
+                const NavigationDestination(
+                  icon: Icon(Icons.map_outlined),
+                  selectedIcon: Icon(Icons.map),
+                  label: 'Mapa',
+                ),
+                const NavigationDestination(
+                  icon: Icon(Icons.local_shipping_outlined),
+                  selectedIcon: Icon(Icons.local_shipping),
+                  label: 'Viajes',
+                ),
+                NavigationDestination(
+                  icon: Badge(
+                    isLabelVisible: alertBadgeCount > 0 && _selectedIndex != 2,
+                    label: Text(
+                      alertBadgeCount > 9 ? '9+' : '$alertBadgeCount',
+                    ),
+                    backgroundColor: AppColors.alertCritical,
+                    child: const Icon(Icons.warning_amber_outlined),
+                  ),
+                  selectedIcon: const Icon(Icons.warning_amber),
+                  label: 'Alertas',
+                ),
+                const NavigationDestination(
+                  icon: Icon(Icons.person_outline),
+                  selectedIcon: Icon(Icons.person),
+                  label: 'Perfil',
+                ),
+              ],
+            ),
           ),
-          NavigationDestination(
-            icon: Icon(Icons.local_shipping_outlined),
-            selectedIcon: Icon(Icons.local_shipping),
-            label: 'Viajes',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.warning_amber_outlined),
-            selectedIcon: Icon(Icons.warning_amber),
-            label: 'Alertas',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Perfil',
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -329,6 +461,9 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
           options: MapOptions(
             center: _currentPosition ?? LatLng(1.2053, -77.2886),
             zoom: 16.0,
+            minZoom: 6.0,
+            maxZoom: 19.0,
+            interactiveFlags: InteractiveFlag.all & ~InteractiveFlag.rotate,
             onPositionChanged: (position, hasGesture) {
               if (hasGesture) {
                 setState(() {
@@ -348,8 +483,8 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
               markers: [
                 if (_currentPosition != null)
                   Marker(
-                    width: 52.0,
-                    height: 52.0,
+                    width: 44.0,
+                    height: 44.0,
                     point: _currentPosition!,
                     builder:
                         (ctx) => OperationalVehiclePresenceMarker(
@@ -366,8 +501,8 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
                   ),
                 if (_destinoPosition != null)
                   Marker(
-                    width: 46.0,
-                    height: 46.0,
+                    width: 40.0,
+                    height: 40.0,
                     point: _destinoPosition!,
                     builder:
                         (ctx) => const OperationalDestinationMarker(
@@ -376,8 +511,8 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
                   ),
                 ...alertasCercanas.map(
                   (alerta) => Marker(
-                    width: 52.0,
-                    height: 52.0,
+                    width: 44.0,
+                    height: 44.0,
                     point: LatLng(alerta.coords['lat']!, alerta.coords['lng']!),
                     builder:
                         (ctx) => OperationalAlertMarker(
@@ -387,9 +522,35 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
                         ),
                   ),
                 ),
+                if (_showTruckerPlaces)
+                  ..._truckerPlaces.map(
+                    (place) => Marker(
+                      width: 36,
+                      height: 36,
+                      point: place.position,
+                      builder:
+                          (ctx) => _TruckerPlaceMarker(
+                            place: place,
+                            onTap: () => _mostrarDetalleServicio(place),
+                          ),
+                    ),
+                  ),
               ],
             ),
           ],
+        ),
+        Positioned(
+          left: AppSpacing.md,
+          top: viajeActivo == null ? AppSpacing.md : 96,
+          child:
+              _showTruckerPlaces
+                  ? _PlacesMapStatusBadge(
+                    loading: _placesLoading,
+                    error: _placesError,
+                    count: _truckerPlaces.length,
+                    onRetry: _loadTruckerPlaces,
+                  )
+                  : const SizedBox.shrink(),
         ),
         // Controles del mapa
         Positioned(
@@ -408,6 +569,8 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
                 ),
             onRecenter: _toggleFollowUser,
             recenterActive: _isFollowingUser,
+            onFilter: _showPlacesFilters,
+            filterActive: _showTruckerPlaces,
           ),
         ),
 
@@ -423,7 +586,8 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
                 await Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => RutaViajeScreen(oportunidad: viajeActivo),
+                    builder:
+                        (context) => RutaViajeScreen(oportunidad: viajeActivo),
                   ),
                 );
                 if (mounted) {
@@ -434,13 +598,238 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => RutaViajeScreen(oportunidad: viajeActivo),
+                    builder:
+                        (context) => RutaViajeScreen(oportunidad: viajeActivo),
                   ),
                 );
               },
             ),
           ),
       ],
+    );
+  }
+
+  Future<void> _showPlacesFilters() async {
+    final selected = Set<TruckerPlaceCategory>.from(_selectedPlaceCategories);
+    var showPlaces = _showTruckerPlaces;
+
+    final shouldApply = await showModalBottomSheet<bool>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder:
+          (context) => StatefulBuilder(
+            builder:
+                (context, setSheetState) => Material(
+                  color: AppColors.graphite950,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(AppSpacing.sheetRadius),
+                  ),
+                  child: SafeArea(
+                    top: false,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(
+                        AppSpacing.lg,
+                        AppSpacing.sm,
+                        AppSpacing.lg,
+                        AppSpacing.lg,
+                      ),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const PremiumSheetHandle(),
+                          const SizedBox(height: AppSpacing.md),
+                          Text(
+                            'Servicios visibles en el mapa',
+                            style: Theme.of(
+                              context,
+                            ).textTheme.titleLarge?.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.xs),
+                          Text(
+                            'Filtra restaurantes, gasolineras, talleres y otros puntos útiles para carretera.',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: AppColors.graphite300),
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          SwitchListTile.adaptive(
+                            contentPadding: EdgeInsets.zero,
+                            value: showPlaces,
+                            activeThumbColor: AppColors.emerald400,
+                            title: const Text('Mostrar servicios en mapa'),
+                            subtitle: const Text(
+                              'Usa datos abiertos de OpenStreetMap para Nariño.',
+                            ),
+                            onChanged:
+                                (value) =>
+                                    setSheetState(() => showPlaces = value),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          Wrap(
+                            spacing: AppSpacing.sm,
+                            runSpacing: AppSpacing.sm,
+                            children:
+                                TruckerPlaceCategory.values.map((category) {
+                                  final isSelected = selected.contains(
+                                    category,
+                                  );
+                                  return FilterChip(
+                                    selected: isSelected,
+                                    avatar: Icon(category.icon, size: 18),
+                                    label: Text(category.label),
+                                    selectedColor: category.color.withValues(
+                                      alpha: 0.22,
+                                    ),
+                                    checkmarkColor: category.color,
+                                    onSelected:
+                                        showPlaces
+                                            ? (value) {
+                                              setSheetState(() {
+                                                if (value) {
+                                                  selected.add(category);
+                                                } else {
+                                                  selected.remove(category);
+                                                }
+                                              });
+                                            }
+                                            : null,
+                                  );
+                                }).toList(),
+                          ),
+                          const SizedBox(height: AppSpacing.lg),
+                          FilledButton.icon(
+                            onPressed: () => Navigator.of(context).pop(true),
+                            icon: const Icon(Icons.map_outlined),
+                            label: const Text('Aplicar filtros'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+          ),
+    );
+
+    if (shouldApply != true) return;
+
+    setState(() {
+      _showTruckerPlaces = showPlaces;
+      _selectedPlaceCategories
+        ..clear()
+        ..addAll(selected);
+      if (!_showTruckerPlaces) {
+        _truckerPlaces = [];
+        _placesError = null;
+      }
+    });
+
+    if (_showTruckerPlaces) {
+      _loadTruckerPlaces();
+    }
+  }
+
+  void _mostrarDetalleServicio(TruckerPlace place) {
+    final current = _currentPosition;
+    final distance =
+        current == null
+            ? null
+            : const Distance().as(
+              LengthUnit.Kilometer,
+              current,
+              place.position,
+            );
+
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder:
+          (context) => Material(
+            color: AppColors.graphite950,
+            borderRadius: const BorderRadius.vertical(
+              top: Radius.circular(AppSpacing.sheetRadius),
+            ),
+            child: SafeArea(
+              top: false,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.lg,
+                  AppSpacing.sm,
+                  AppSpacing.lg,
+                  AppSpacing.lg,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const PremiumSheetHandle(),
+                    const SizedBox(height: AppSpacing.md),
+                    Row(
+                      children: [
+                        _TruckerPlaceIcon(category: place.category),
+                        const SizedBox(width: AppSpacing.md),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                place.name,
+                                style: Theme.of(
+                                  context,
+                                ).textTheme.titleLarge?.copyWith(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                place.category.label,
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(color: place.category.color),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    PremiumInfoRow(
+                      icon: Icons.location_on_outlined,
+                      label: 'Ubicación',
+                      value:
+                          place.address ??
+                          '${place.position.latitude.toStringAsFixed(5)}, ${place.position.longitude.toStringAsFixed(5)}',
+                      color: place.category.color,
+                    ),
+                    if (distance != null)
+                      PremiumInfoRow(
+                        icon: Icons.near_me_outlined,
+                        label: 'Distancia aproximada',
+                        value: '${distance.toStringAsFixed(1)} km desde tu GPS',
+                        color: AppColors.emerald400,
+                      ),
+                    if (place.phone != null)
+                      PremiumInfoRow(
+                        icon: Icons.phone_outlined,
+                        label: 'Teléfono OSM',
+                        value: place.phone!,
+                        color: AppColors.statusSyncing,
+                      ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Text(
+                      'Datos abiertos de OpenStreetMap filtrados para Nariño. Verifica disponibilidad antes de desviarte.',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.graphite300,
+                        height: 1.35,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
     );
   }
 
@@ -563,7 +952,7 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
                         const SizedBox(height: AppSpacing.sm),
                         Text(
                           tieneOportunidadActiva
-                              ? '${viajeActivo!.origen} → ${viajeActivo.destino}'
+                              ? '${viajeActivo.origen} → ${viajeActivo.destino}'
                               : 'Sin viaje asignado',
                           style: Theme.of(context).textTheme.titleSmall,
                           maxLines: 2,
@@ -646,5 +1035,117 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
 
     return R * c;
   }
+}
 
+class _PlacesMapStatusBadge extends StatelessWidget {
+  final bool loading;
+  final String? error;
+  final int count;
+  final VoidCallback onRetry;
+
+  const _PlacesMapStatusBadge({
+    required this.loading,
+    required this.error,
+    required this.count,
+    required this.onRetry,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final hasError = error != null;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: hasError && !loading ? onRetry : null,
+        borderRadius: BorderRadius.circular(999),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+          decoration: BoxDecoration(
+            color: AppColors.graphite950.withValues(alpha: 0.9),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color:
+                  hasError
+                      ? AppColors.alertCritical.withValues(alpha: 0.35)
+                      : AppColors.emerald400.withValues(alpha: 0.22),
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (loading)
+                const SizedBox(
+                  width: 14,
+                  height: 14,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              else
+                Icon(
+                  hasError
+                      ? Icons.sync_problem_rounded
+                      : Icons.local_gas_station_outlined,
+                  size: 16,
+                  color:
+                      hasError ? AppColors.alertCritical : AppColors.emerald300,
+                ),
+              const SizedBox(width: 8),
+              Text(
+                hasError ? 'Reintentar servicios' : 'Servicios Nariño · $count',
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _TruckerPlaceMarker extends StatelessWidget {
+  final TruckerPlace place;
+  final VoidCallback onTap;
+
+  const _TruckerPlaceMarker({required this.place, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: '${place.category.label}: ${place.name}',
+      button: true,
+      child: GestureDetector(
+        onTap: onTap,
+        child: _TruckerPlaceIcon(category: place.category),
+      ),
+    );
+  }
+}
+
+class _TruckerPlaceIcon extends StatelessWidget {
+  final TruckerPlaceCategory category;
+
+  const _TruckerPlaceIcon({required this.category});
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppColors.graphite950.withValues(alpha: 0.96),
+        shape: BoxShape.circle,
+        border: Border.all(color: category.color.withValues(alpha: 0.82)),
+        boxShadow: [
+          BoxShadow(
+            color: category.color.withValues(alpha: 0.28),
+            blurRadius: 16,
+            spreadRadius: 1,
+          ),
+        ],
+      ),
+      child: Center(
+        child: Icon(category.icon, color: category.color, size: 18),
+      ),
+    );
+  }
 }

@@ -23,13 +23,6 @@ const afiliarCamionero = async (req, res) => {
     const camioneroId = req.params.id;
 
     const contratistaId = req.usuario.id;
-    const bbox = parseBboxQuery(req.query);
-    const limit = Math.min(Number(req.query.limit) || 250, 500);
-    const page = Math.max(Number(req.query.page) || 1, 1);
-    const activeOnly = req.query.activeOnly === 'true' || req.query.status === 'active';
-    const staleOnly = req.query.staleOnly === 'true' || req.query.status === 'stale';
-    const offlineOnly = req.query.offlineOnly === 'true' || req.query.status === 'offline';
-    const activeTripOnly = req.query.activeTripOnly === 'true';
 
 
 
@@ -146,6 +139,13 @@ const obtenerFlotaTracking = async (req, res) => {
   try {
 
     const contratistaId = req.usuario.id;
+    const bbox = parseBboxQuery(req.query);
+    const limit = Math.min(Number(req.query.limit) || 250, 500);
+    const page = Math.max(Number(req.query.page) || 1, 1);
+    const activeOnly = req.query.activeOnly === 'true' || req.query.status === 'active';
+    const staleOnly = req.query.staleOnly === 'true' || req.query.status === 'stale';
+    const offlineOnly = req.query.offlineOnly === 'true' || req.query.status === 'offline';
+    const activeTripOnly = req.query.activeTripOnly === 'true';
 
     const contratista = await User.findById(contratistaId)
 

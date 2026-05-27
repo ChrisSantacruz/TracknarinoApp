@@ -16,6 +16,8 @@ const TRIP_STATES = ['disponible', 'asignada', 'aceptada', 'en_ruta', 'entregada
 
 const ACTIVE_TRIP_STATES = ['asignada', 'aceptada', 'en_ruta'];
 
+const NEGOTIATION_STATES = ['sin_oferta', 'oferta_camionero', 'contraoferta_contratista', 'aceptada', 'cancelada'];
+
 
 
 const geoPointSchema = new mongoose.Schema({
@@ -108,7 +110,18 @@ const oportunidadSchema = new mongoose.Schema({
 
   contratista: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
 
-  camioneroAsignado: { type: mongoose.Schema.Types.ObjectId, ref: 'User' }
+  camioneroAsignado: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
+  negociacion: {
+    estado: { type: String, enum: NEGOTIATION_STATES, default: 'sin_oferta' },
+    precioOfertado: { type: Number },
+    precioContraoferta: { type: Number },
+    camionero: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    ultimaAccionPor: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    ultimaAccionRol: { type: String, enum: ['camionero', 'contratista'] },
+    mensaje: { type: String, trim: true },
+    updatedAt: { type: Date },
+  }
 
 }, {
 

@@ -61,6 +61,11 @@ const userSchema = new mongoose.Schema({
       type: Number,
       required: function() { return this.tipoUsuario === 'camionero'; }
     },
+    unidadCapacidad: {
+      type: String,
+      enum: ['kg', 'pasajeros'],
+      default: 'kg'
+    },
     marca: {
       type: String,
       required: function() { return this.tipoUsuario === 'camionero'; }
@@ -80,11 +85,15 @@ const userSchema = new mongoose.Schema({
   },
   empresaAfiliada: {
     type: String,
-    required: function() { return this.tipoUsuario === 'camionero'; }
+    default: ''
   },
   licenciaExpedicion: {
     type: Date,
-    required: function() { return this.tipoUsuario === 'camionero'; }
+    required: function() { return this.tipoUsuario === 'camionero' && !this.licenciaVencimiento; }
+  },
+  licenciaVencimiento: {
+    type: Date,
+    required: function() { return this.tipoUsuario === 'camionero' && !this.licenciaExpedicion; }
   },
   numeroCedula: {
     type: String,

@@ -53,6 +53,18 @@ function routeLabel(oportunidad) {
   return `${origen} a ${destino}`;
 }
 
+function parsePositiveMoney(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function populateOpportunityDetails(oportunidad) {
+  await oportunidad.populate('camioneroAsignado', 'nombre correo telefono camion');
+  await oportunidad.populate('contratista', 'nombre correo telefono empresa');
+  await oportunidad.populate('negociacion.camionero', 'nombre correo telefono camion');
+  return oportunidad;
+}
+
 // Crear oportunidad (contratista o camionero)
 const crearOportunidad = async (req, res) => {
   try {
@@ -138,10 +150,155 @@ const listarOportunidades = async (req, res) => {
   try {
     const oportunidades = await Oportunidad.find({ estado: 'disponible' })
       .sort({ fecha: 1 })
-      .populate('contratista', 'nombre correo');
+      .populate('contratista', 'nombre correo telefono empresa')
+      .populate('negociacion.camionero', 'nombre correo telefono camion');
     res.json(oportunidades);
   } catch (error) {
     res.status(500).json({ error: 'Error al listar oportunidades' });
+  }
+};
+
+const enviarOfertaPrecio = async (req, res) => {
+  try {
+    const precioOfertado = parsePositiveMoney(req.body.precioOfertado);
+    if (!precioOfertado) {
+      return res.status(400).json({ error: 'El precio ofertado debe ser mayor a cero' });
+    }
+
+    const oportunidad = await Oportunidad.findById(req.params.id);
+    if (!oportunidad) {
+      return res.status(404).json({ error: 'Oportunidad no encontrada' });
+    }
+    if (oportunidad.estado !== 'disponible') {
+      return res.status(400).json({ error: 'Solo se pueden negociar cargas disponibles' });
+    }
+
+    oportunidad.negociacion = {
+      ...(oportunidad.negociacion?.toObject?.() || oportunidad.negociacion || {}),
+      estado: 'oferta_camionero',
+      precioOfertado,
+      precioContraoferta: undefined,
+      camionero: req.usuario.id,
+      ultimaAccionPor: req.usuario.id,
+      ultimaAccionRol: 'camionero',
+      mensaje: req.body.mensaje,
+      updatedAt: new Date(),
+    };
+
+    await oportunidad.save();
+    await populateOpportunityDetails(oportunidad);
+    return res.json({ mensaje: 'Oferta enviada', oportunidad });
+  } catch (error) {
+    console.error('Error al enviar oferta:', error);
+    return res.status(500).json({ error: 'Error al enviar oferta' });
+  }
+};
+
+const cancelarOfertaPrecio = async (req, res) => {
+  try {
+    const oportunidad = await Oportunidad.findById(req.params.id);
+    if (!oportunidad) {
+      return res.status(404).json({ error: 'Oportunidad no encontrada' });
+    }
+
+    const esCamioneroOferta = oportunidad.negociacion?.camionero?.toString() === req.usuario.id;
+    const esContratista = oportunidad.contratista.toString() === req.usuario.id;
+    if (!esCamioneroOferta && !esContratista) {
+      return res.status(403).json({ error: 'No tienes permisos para cancelar esta negociación' });
+    }
+
+    oportunidad.negociacion = {
+      ...(oportunidad.negociacion?.toObject?.() || oportunidad.negociacion || {}),
+      estado: 'cancelada',
+      ultimaAccionPor: req.usuario.id,
+      ultimaAccionRol: req.usuario.tipoUsuario,
+      updatedAt: new Date(),
+    };
+
+    await oportunidad.save();
+    await populateOpportunityDetails(oportunidad);
+    return res.json({ mensaje: 'Oferta cancelada', oportunidad });
+  } catch (error) {
+    console.error('Error al cancelar oferta:', error);
+    return res.status(500).json({ error: 'Error al cancelar oferta' });
+  }
+};
+
+const enviarContraofertaPrecio = async (req, res) => {
+  try {
+    const precioContraoferta = parsePositiveMoney(req.body.precioContraoferta);
+    if (!precioContraoferta) {
+      return res.status(400).json({ error: 'La contraoferta debe ser mayor a cero' });
+    }
+
+    const oportunidad = await Oportunidad.findById(req.params.id);
+    if (!oportunidad) {
+      return res.status(404).json({ error: 'Oportunidad no encontrada' });
+    }
+    if (oportunidad.contratista.toString() !== req.usuario.id) {
+      return res.status(403).json({ error: 'Solo el contratista puede contraofertar' });
+    }
+    if (!oportunidad.negociacion?.camionero) {
+      return res.status(400).json({ error: 'No hay oferta de camionero para responder' });
+    }
+
+    oportunidad.negociacion = {
+      ...(oportunidad.negociacion?.toObject?.() || oportunidad.negociacion || {}),
+      estado: 'contraoferta_contratista',
+      precioContraoferta,
+      ultimaAccionPor: req.usuario.id,
+      ultimaAccionRol: 'contratista',
+      mensaje: req.body.mensaje,
+      updatedAt: new Date(),
+    };
+
+    await oportunidad.save();
+    await populateOpportunityDetails(oportunidad);
+    return res.json({ mensaje: 'Contraoferta enviada', oportunidad });
+  } catch (error) {
+    console.error('Error al enviar contraoferta:', error);
+    return res.status(500).json({ error: 'Error al enviar contraoferta' });
+  }
+};
+
+const aceptarContraofertaPrecio = async (req, res) => {
+  try {
+    const oportunidad = await Oportunidad.findById(req.params.id);
+    if (!oportunidad) {
+      return res.status(404).json({ error: 'Oportunidad no encontrada' });
+    }
+    if (oportunidad.estado !== 'disponible') {
+      return res.status(400).json({ error: 'Esta carga ya no está disponible' });
+    }
+    if (oportunidad.negociacion?.estado !== 'contraoferta_contratista') {
+      return res.status(400).json({ error: 'No hay contraoferta pendiente' });
+    }
+    if (oportunidad.negociacion.camionero?.toString() !== req.usuario.id) {
+      return res.status(403).json({ error: 'Solo el camionero ofertante puede aceptar la contraoferta' });
+    }
+
+    const viajeActivo = await Oportunidad.findOne({
+      camioneroAsignado: req.usuario.id,
+      estado: { $in: ACTIVE_TRIP_STATES }
+    });
+    if (viajeActivo) {
+      return res.status(400).json({ error: 'Ya tienes un viaje activo. Finaliza tu viaje actual antes de aceptar otra carga.' });
+    }
+
+    oportunidad.precio = oportunidad.negociacion.precioContraoferta;
+    oportunidad.camioneroAsignado = req.usuario.id;
+    oportunidad.negociacion.estado = 'aceptada';
+    oportunidad.negociacion.ultimaAccionPor = req.usuario.id;
+    oportunidad.negociacion.ultimaAccionRol = 'camionero';
+    oportunidad.negociacion.updatedAt = new Date();
+    const previousState = setTripState(oportunidad, 'aceptada');
+    await oportunidad.save();
+    await publishTripStateChanged(oportunidad, previousState);
+    await populateOpportunityDetails(oportunidad);
+    return res.json({ mensaje: 'Contraoferta aceptada', oportunidad });
+  } catch (error) {
+    console.error('Error al aceptar contraoferta:', error);
+    return res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Error al aceptar contraoferta' });
   }
 };
 
@@ -340,6 +497,10 @@ module.exports = {
   asignarCamionero,
   finalizarCarga,
   aceptarOportunidad,
+  enviarOfertaPrecio,
+  cancelarOfertaPrecio,
+  enviarContraofertaPrecio,
+  aceptarContraofertaPrecio,
   obtenerViajeActivo,
   iniciarViaje
 };

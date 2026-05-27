@@ -1,0 +1,24 @@
+---
+description: Realtime tracking, notifications, reconnection, and synchronization rules
+globs: trackarino_app/lib/**/*.dart,Backend/**/*.js
+alwaysApply: false
+---
+
+# Realtime Rules
+
+Realtime features must be reliable, observable, and safe after reconnection.
+
+Requirements:
+- Keep live GPS tracking consistent between backend and Flutter
+- Handle socket, stream, and notification reconnections explicitly
+- Prevent duplicate listeners, duplicate events, and duplicate alerts
+- Persist critical realtime events before broadcasting them
+- Show accurate connection and sync status in the UI
+- Recover gracefully from intermittent mobile connectivity
+- Validate all realtime payloads on the backend
+- Keep frontend state synchronized with confirmed backend state
+
+Never:
+- Treat realtime events as the only source of persistence
+- Drop alerts or location updates silently
+- Assume stable network conditions

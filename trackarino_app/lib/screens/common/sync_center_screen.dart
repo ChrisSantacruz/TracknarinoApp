@@ -13,6 +13,7 @@ import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/operational/operational_card.dart';
 import '../../widgets/operational/operational_svg_icon.dart';
+import '../../widgets/operational/premium_operational_widgets.dart';
 
 class SyncCenterScreen extends StatefulWidget {
   const SyncCenterScreen({super.key});
@@ -100,28 +101,39 @@ class _SyncCenterScreenState extends State<SyncCenterScreen> {
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: _refresh,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(
-            AppSpacing.md,
-            AppSpacing.sm,
-            AppSpacing.md,
-            AppSpacing.xxl,
+      backgroundColor: AppColors.inkBlack,
+      body: PremiumGradientScaffold(
+        safeArea: false,
+        child: RefreshIndicator(
+          onRefresh: _refresh,
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.md,
+              AppSpacing.sm,
+              AppSpacing.md,
+              AppSpacing.xxl,
+            ),
+            children: [
+              const PremiumScreenHeader(
+                eyebrow: 'SyncEngine',
+                title: 'Centro de sincronización',
+                subtitle:
+                    'Cola offline, conectividad y estado realtime sin pérdida de eventos.',
+              ),
+              const SizedBox(height: AppSpacing.md),
+              _HealthHero(snapshot: health),
+              const SizedBox(height: AppSpacing.md),
+              _buildHealthGrid(),
+              const SizedBox(height: AppSpacing.md),
+              _buildPendingSection(),
+              const SizedBox(height: AppSpacing.md),
+              _buildFailureSection(),
+              const SizedBox(height: AppSpacing.md),
+              _buildRealtimeSection(),
+              const SizedBox(height: AppSpacing.md),
+              _buildTimelineSection(),
+            ],
           ),
-          children: [
-            _HealthHero(snapshot: health),
-            const SizedBox(height: AppSpacing.md),
-            _buildHealthGrid(),
-            const SizedBox(height: AppSpacing.md),
-            _buildPendingSection(),
-            const SizedBox(height: AppSpacing.md),
-            _buildFailureSection(),
-            const SizedBox(height: AppSpacing.md),
-            _buildRealtimeSection(),
-            const SizedBox(height: AppSpacing.md),
-            _buildTimelineSection(),
-          ],
         ),
       ),
     );

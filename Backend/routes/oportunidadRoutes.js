@@ -1,6 +1,15 @@
 const express = require('express');
 const router = express.Router();
-const { crearOportunidad, listarOportunidades, asignarCamionero, finalizarCarga } = require('../controllers/oportunidadController');
+const {
+  crearOportunidad,
+  listarOportunidades,
+  asignarCamionero,
+  finalizarCarga,
+  enviarOfertaPrecio,
+  cancelarOfertaPrecio,
+  enviarContraofertaPrecio,
+  aceptarContraofertaPrecio,
+} = require('../controllers/oportunidadController');
 const verificarToken = require('../middleware/authMiddleware');
 const soloRol = require('../middleware/rolMiddleware');
 
@@ -18,6 +27,12 @@ router.post('/asignar/:id', verificarToken, soloRol('camionero'), asignarCamione
 
 // Aceptar oportunidad (nuevo endpoint con validaciones)
 router.put('/:id/aceptar', verificarToken, soloRol('camionero'), require('../controllers/oportunidadController').aceptarOportunidad);
+
+// Negociación de precio
+router.post('/:id/oferta', verificarToken, soloRol('camionero'), enviarOfertaPrecio);
+router.delete('/:id/oferta', verificarToken, soloRol(['camionero', 'contratista']), cancelarOfertaPrecio);
+router.post('/:id/contraoferta', verificarToken, soloRol('contratista'), enviarContraofertaPrecio);
+router.put('/:id/contraoferta/aceptar', verificarToken, soloRol('camionero'), aceptarContraofertaPrecio);
 
 // Obtener viaje activo del camionero
 router.get('/viaje-activo', verificarToken, soloRol('camionero'), require('../controllers/oportunidadController').obtenerViajeActivo);

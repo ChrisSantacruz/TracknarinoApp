@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../config/api_config.dart';
 import '../models/oportunidad_model.dart';
 import '../api_service.dart';
@@ -22,7 +24,7 @@ class OportunidadService {
           .map((data) => Oportunidad.fromJson(data))
           .toList();
     } catch (e) {
-      print('Error al obtener oportunidades: $e');
+      debugPrint('Error al obtener oportunidades: $e');
       rethrow;
     }
   }
@@ -33,7 +35,7 @@ class OportunidadService {
       final response = await ApiService.get('${ApiConfig.oportunidades}/$id');
       return Oportunidad.fromJson(response);
     } catch (e) {
-      print('Error al obtener detalle de oportunidad: $e');
+      debugPrint('Error al obtener detalle de oportunidad: $e');
       return null;
     }
   }
@@ -49,7 +51,7 @@ class OportunidadService {
       );
       return response;
     } catch (e) {
-      print('Error al aplicar a oportunidad: $e');
+      debugPrint('Error al aplicar a oportunidad: $e');
       rethrow;
     }
   }
@@ -79,7 +81,7 @@ class OportunidadService {
       );
       return Oportunidad.fromJson(response['oportunidad']);
     } catch (e) {
-      print('Error al crear oportunidad: $e');
+      debugPrint('Error al crear oportunidad: $e');
       return null;
     }
   }
@@ -89,16 +91,16 @@ class OportunidadService {
     Map<String, dynamic> data,
   ) async {
     try {
-      print('Intentando crear oportunidad con datos: $data');
+      debugPrint('Intentando crear oportunidad con datos: $data');
       final response = await ApiService.post(
         '${ApiConfig.oportunidades}/crear',
         data,
       );
 
-      print('Respuesta del servidor al crear oportunidad: $response');
+      debugPrint('Respuesta del servidor al crear oportunidad: $response');
       return Oportunidad.fromJson(response['oportunidad']);
     } catch (e) {
-      print('Error detallado al crear oportunidad completa: $e');
+      debugPrint('Error detallado al crear oportunidad completa: $e');
       return null;
     }
   }
@@ -117,7 +119,7 @@ class OportunidadService {
       );
       return true;
     } catch (e) {
-      print('Error al asignar camionero: $e');
+      debugPrint('Error al asignar camionero: $e');
       return false;
     }
   }
@@ -131,7 +133,7 @@ class OportunidadService {
       );
       return true;
     } catch (e) {
-      print('Error al finalizar carga: $e');
+      debugPrint('Error al finalizar carga: $e');
       return false;
     }
   }
@@ -155,9 +157,40 @@ class OportunidadService {
           'Aceptación guardada. Se confirmará cuando vuelva la conexión.',
         );
       }
-      print('Error al aceptar oportunidad: $e');
+      debugPrint('Error al aceptar oportunidad: $e');
       rethrow;
     }
+  }
+
+  static Future<Oportunidad> enviarOfertaPrecio({
+    required String oportunidadId,
+    required double precioOfertado,
+    String? mensaje,
+  }) async {
+    final response = await ApiService.post(
+      '${ApiConfig.oportunidades}/$oportunidadId/oferta',
+      {
+        'precioOfertado': precioOfertado,
+        if (mensaje != null && mensaje.trim().isNotEmpty)
+          'mensaje': mensaje.trim(),
+      },
+    );
+    return Oportunidad.fromJson(response['oportunidad']);
+  }
+
+  static Future<Oportunidad> cancelarOfertaPrecio(String oportunidadId) async {
+    final response = await ApiService.delete(
+      '${ApiConfig.oportunidades}/$oportunidadId/oferta',
+    );
+    return Oportunidad.fromJson(response['oportunidad']);
+  }
+
+  static Future<Oportunidad> aceptarContraoferta(String oportunidadId) async {
+    final response = await ApiService.put(
+      '${ApiConfig.oportunidades}/$oportunidadId/contraoferta/aceptar',
+      {},
+    );
+    return Oportunidad.fromJson(response['oportunidad']);
   }
 
   /// Obtener viaje activo del camionero
@@ -173,7 +206,7 @@ class OportunidadService {
 
       return Oportunidad.fromJson(response['viajeActivo']);
     } catch (e) {
-      print('Error al obtener viaje activo: $e');
+      debugPrint('Error al obtener viaje activo: $e');
       return null;
     }
   }
@@ -197,7 +230,7 @@ class OportunidadService {
           'Inicio de viaje guardado. Queda pendiente de confirmación del servidor.',
         );
       }
-      print('Error al iniciar viaje: $e');
+      debugPrint('Error al iniciar viaje: $e');
       rethrow;
     }
   }

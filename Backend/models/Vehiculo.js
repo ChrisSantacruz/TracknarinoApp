@@ -8,12 +8,17 @@ const vehiculoSchema = new mongoose.Schema({
   },
   tipoVehiculo: {
     type: String,
-    enum: ['bus', 'buseta', 'piaggio', 'camion de carga', 'volqueta'],
+    enum: ['bus', 'buseta', 'piaggio', 'camion de carga', 'volqueta', 'camion piaggio'],
     required: true
   },
   capacidadCarga: {
     type: Number,
     required: true
+  },
+  unidadCapacidad: {
+    type: String,
+    enum: ['kg', 'pasajeros'],
+    default: 'kg'
   },
   marca: {
     type: String,

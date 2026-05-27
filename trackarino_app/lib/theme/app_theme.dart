@@ -10,31 +10,32 @@ abstract final class AppTheme {
 
   static ThemeData _build(Brightness brightness) {
     final isDark = brightness == Brightness.dark;
-    final colorScheme = isDark
-        ? const ColorScheme.dark(
-            primary: AppColors.deepGreenLight,
-            onPrimary: Colors.white,
-            secondary: AppColors.statusPending,
-            surface: AppColors.darkSurface,
-            onSurface: Color(0xFFE5E7EB),
-            error: AppColors.alertCritical,
-          )
-        : ColorScheme.fromSeed(
-            seedColor: AppColors.deepGreen,
-            primary: AppColors.deepGreen,
-            onPrimary: Colors.white,
-            surface: Colors.white,
-            onSurface: AppColors.graphite900,
-            error: AppColors.alertCritical,
-            brightness: Brightness.light,
-          );
+    final colorScheme =
+        isDark
+            ? const ColorScheme.dark(
+              primary: AppColors.deepGreenLight,
+              onPrimary: Colors.white,
+              secondary: AppColors.statusPending,
+              surface: AppColors.darkSurface,
+              onSurface: Color(0xFFE5E7EB),
+              error: AppColors.alertCritical,
+            )
+            : ColorScheme.fromSeed(
+              seedColor: AppColors.deepGreen,
+              primary: AppColors.deepGreen,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: AppColors.graphite900,
+              error: AppColors.alertCritical,
+              brightness: Brightness.light,
+            );
 
     final base = ThemeData(
       useMaterial3: true,
       brightness: brightness,
       colorScheme: colorScheme,
       scaffoldBackgroundColor:
-          isDark ? AppColors.darkSurface : AppColors.graphite50,
+          isDark ? AppColors.inkBlack : AppColors.graphite50,
       cardTheme: CardThemeData(
         elevation: isDark ? 2 : 1,
         color: isDark ? AppColors.darkSurfaceElevated : Colors.white,
@@ -49,9 +50,8 @@ abstract final class AppTheme {
         scrolledUnderElevation: 1,
         backgroundColor: isDark ? AppColors.darkSurfaceHigh : Colors.white,
         foregroundColor: isDark ? Colors.white : AppColors.graphite900,
-        systemOverlayStyle: isDark
-            ? SystemUiOverlayStyle.light
-            : SystemUiOverlayStyle.dark,
+        systemOverlayStyle:
+            isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
       ),
       bottomNavigationBarTheme: BottomNavigationBarThemeData(
         type: BottomNavigationBarType.fixed,
@@ -92,13 +92,46 @@ abstract final class AppTheme {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: isDark ? AppColors.darkSurfaceHigh : AppColors.graphite50,
+        fillColor:
+            isDark
+                ? Colors.white.withValues(alpha: 0.055)
+                : AppColors.graphite50,
+        labelStyle: TextStyle(
+          color: isDark ? AppColors.graphite300 : AppColors.graphite700,
+          fontWeight: FontWeight.w600,
+        ),
+        hintStyle: TextStyle(
+          color: isDark ? AppColors.graphite700 : AppColors.graphite700,
+        ),
         border: OutlineInputBorder(
-          borderRadius: BorderRadius.circular(AppSpacing.chipRadius),
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(
+            color:
+                isDark
+                    ? Colors.white.withValues(alpha: 0.08)
+                    : AppColors.graphite200,
+          ),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: BorderSide(
+            color:
+                isDark
+                    ? Colors.white.withValues(alpha: 0.08)
+                    : AppColors.graphite200,
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: const BorderSide(color: AppColors.emerald400, width: 1.4),
+        ),
+        errorBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(18),
+          borderSide: const BorderSide(color: AppColors.alertCritical),
         ),
         contentPadding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.md,
-          vertical: AppSpacing.sm,
+          vertical: AppSpacing.md,
         ),
       ),
       dividerTheme: DividerThemeData(
@@ -112,9 +145,7 @@ abstract final class AppTheme {
       ),
     );
 
-    return base.copyWith(
-      textTheme: _textTheme(base.textTheme, isDark),
-    );
+    return base.copyWith(textTheme: _textTheme(base.textTheme, isDark));
   }
 
   static TextTheme _textTheme(TextTheme base, bool isDark) {

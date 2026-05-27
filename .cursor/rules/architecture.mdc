@@ -1,0 +1,37 @@
+---
+description: Core architecture rules for the TrackNariño platform
+alwaysApply: true
+---
+
+# TrackNariño Architecture Rules
+
+This project is a production-grade logistics and trucking platform for Colombia.
+
+The system must prioritize:
+
+- Real-time logistics reliability
+- GPS tracking stability
+- Offline-first behavior
+- Security alerts
+- Scalability
+- Production-ready architecture
+- Clean modular code
+- Error tolerance
+- Premium UX/UI
+
+Mandatory rules:
+
+- Never create duplicated logic
+- Never leave TODO placeholders
+- Never simulate functionality
+- Every screen must connect to real backend data
+- Every API endpoint must be validated
+- Every async process must handle errors
+- All navigation flows must be tested
+- Use repository/service architecture
+- Separate UI, state, services and models correctly
+- Backend must follow controller/service/repository structure
+- No hardcoded URLs
+- No mock data in production code
+- Every feature must support loading, success and error states
+- All critical actions must persist correctly in database

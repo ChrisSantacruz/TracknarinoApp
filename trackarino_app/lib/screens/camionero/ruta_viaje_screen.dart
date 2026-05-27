@@ -137,7 +137,7 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
           _destinoPosition = null;
           _routePoints = [];
           _errorMessage =
-              'La oportunidad no tiene coordenadas reales de destino para calcular ruta.';
+              'Esta carga aún no tiene coordenadas verificadas de destino. Puedes reintentar cuando el contratista complete la ubicación o continuar revisando el detalle del viaje.';
           _isLoadingRoute = false;
         });
         return;
@@ -175,8 +175,8 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
             durationMin == null
                 ? null
                 : durationMin >= 60
-                    ? '${(durationMin / 60).toStringAsFixed(1)} h'
-                    : '$durationMin min';
+                ? '${(durationMin / 60).toStringAsFixed(1)} h'
+                : '$durationMin min';
         if (widget.oportunidad.id != null) {
           await RouteCacheService.save(
             oportunidadId: widget.oportunidad.id!,
@@ -206,14 +206,14 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
         _centerMapOnRoute();
       }
 
-      _connectivitySubscription ??=
-          ConnectivityService.instance.healthStream.listen((health) {
-        if (!mounted) return;
-        setState(() {
-          _connectivityHealth = health;
-        });
-        _evaluateRoutingState();
-      });
+      _connectivitySubscription ??= ConnectivityService.instance.healthStream
+          .listen((health) {
+            if (!mounted) return;
+            setState(() {
+              _connectivityHealth = health;
+            });
+            _evaluateRoutingState();
+          });
 
       // 6. Suscribirse a actualizaciones de ubicación
       _locationSubscription = locationService.positionStream.listen((
@@ -227,7 +227,9 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
           setState(() {
             _currentPosition = nextPosition;
             _currentHeading =
-                newPosition.heading.isFinite ? newPosition.heading : _currentHeading;
+                newPosition.heading.isFinite
+                    ? newPosition.heading
+                    : _currentHeading;
           });
           if (_isFollowingVehicle) {
             _mapController.move(nextPosition, _mapController.zoom);
@@ -242,7 +244,8 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
       }
     } catch (e) {
       setState(() {
-        _errorMessage = 'Error al cargar la ruta: $e';
+        _errorMessage =
+            'No se pudo calcular la ruta en este momento. Revisa conexión, permisos GPS o intenta de nuevo.';
         _isLoadingRoute = false;
       });
     }
@@ -280,16 +283,10 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
       if (point.longitude > maxLng) maxLng = point.longitude;
     }
 
-    final bounds = LatLngBounds(
-      LatLng(minLat, minLng),
-      LatLng(maxLat, maxLng),
-    );
+    final bounds = LatLngBounds(LatLng(minLat, minLng), LatLng(maxLat, maxLng));
     _mapController.fitBounds(
       bounds,
-      options: const FitBoundsOptions(
-        padding: EdgeInsets.all(76),
-        maxZoom: 15,
-      ),
+      options: const FitBoundsOptions(padding: EdgeInsets.all(76), maxZoom: 15),
     );
   }
 
@@ -359,12 +356,13 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
                       width: 52.0,
                       height: 52.0,
                       point: _currentPosition!,
-                      builder: (ctx) => OperationalVehiclePresenceMarker(
-                        status: _viajeIniciado ? 'en_ruta' : 'active',
-                        heading: _currentHeading,
-                        selected: true,
-                        semanticsLabel: 'Tu vehículo en ruta',
-                      ),
+                      builder:
+                          (ctx) => OperationalVehiclePresenceMarker(
+                            status: _viajeIniciado ? 'en_ruta' : 'active',
+                            heading: _currentHeading,
+                            selected: true,
+                            semanticsLabel: 'Tu vehículo en ruta',
+                          ),
                     ),
 
                   if (_destinoPosition != null)
@@ -372,9 +370,10 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
                       width: 46.0,
                       height: 46.0,
                       point: _destinoPosition!,
-                      builder: (ctx) => const OperationalDestinationMarker(
-                        label: 'Destino operativo',
-                      ),
+                      builder:
+                          (ctx) => const OperationalDestinationMarker(
+                            label: 'Destino operativo',
+                          ),
                     ),
 
                   ..._alertasEnRuta.map((alerta) {
@@ -385,11 +384,12 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
                         alerta.coords['lat']!,
                         alerta.coords['lng']!,
                       ),
-                      builder: (ctx) => OperationalAlertMarker(
-                        type: alerta.tipo,
-                        timestamp: alerta.timestamp,
-                        onTap: () => _mostrarDetalleAlerta(alerta),
-                      ),
+                      builder:
+                          (ctx) => OperationalAlertMarker(
+                            type: alerta.tipo,
+                            timestamp: alerta.timestamp,
+                            onTap: () => _mostrarDetalleAlerta(alerta),
+                          ),
                     );
                   }),
                 ],
@@ -426,14 +426,16 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
               right: AppSpacing.md,
               bottom: 200,
               child: MapControlCluster(
-                onZoomIn: () => _mapController.move(
-                  _mapController.center,
-                  _mapController.zoom + 1,
-                ),
-                onZoomOut: () => _mapController.move(
-                  _mapController.center,
-                  _mapController.zoom - 1,
-                ),
+                onZoomIn:
+                    () => _mapController.move(
+                      _mapController.center,
+                      _mapController.zoom + 1,
+                    ),
+                onZoomOut:
+                    () => _mapController.move(
+                      _mapController.center,
+                      _mapController.zoom - 1,
+                    ),
                 onRecenter: () {
                   setState(() => _isFollowingVehicle = true);
                   if (_currentPosition != null) {
@@ -521,8 +523,7 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
   }
 
   Widget _buildInfoPanel() {
-    final tripStatus =
-        _viajeIniciado ? 'en_ruta' : widget.oportunidad.estado;
+    final tripStatus = _viajeIniciado ? 'en_ruta' : widget.oportunidad.estado;
 
     return Material(
       elevation: 8,
@@ -564,7 +565,10 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
                 const SizedBox(height: AppSpacing.md),
                 Row(
                   children: [
-                    const Icon(Icons.flag, color: AppColors.mapMarkerDestination),
+                    const Icon(
+                      Icons.flag,
+                      color: AppColors.mapMarkerDestination,
+                    ),
                     const SizedBox(width: AppSpacing.sm),
                     Expanded(
                       child: Column(
@@ -625,22 +629,24 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
                       child:
                           _routeAssessment?.rerouteRecommended == true
                               ? FilledButton.icon(
-                                  onPressed: () => _requestOperationalReroute(),
-                                  icon: const Icon(Icons.alt_route),
-                                  label: const Text('Recalcular seguro'),
-                                )
+                                onPressed: () => _requestOperationalReroute(),
+                                icon: const Icon(Icons.alt_route),
+                                label: const Text('Recalcular seguro'),
+                              )
                               : _viajeIniciado
-                                  ? OutlinedButton.icon(
-                                      onPressed: () =>
-                                          _requestOperationalReroute(manual: true),
-                                      icon: const Icon(Icons.refresh),
-                                      label: const Text('Verificar ruta'),
-                                    )
-                                  : FilledButton.icon(
-                                      onPressed: _iniciarViaje,
-                                      icon: const Icon(Icons.play_arrow),
-                                      label: const Text('Iniciar viaje'),
+                              ? OutlinedButton.icon(
+                                onPressed:
+                                    () => _requestOperationalReroute(
+                                      manual: true,
                                     ),
+                                icon: const Icon(Icons.refresh),
+                                label: const Text('Verificar ruta'),
+                              )
+                              : FilledButton.icon(
+                                onPressed: _iniciarViaje,
+                                icon: const Icon(Icons.play_arrow),
+                                label: const Text('Iniciar viaje'),
+                              ),
                     ),
                   ],
                 ),
@@ -669,9 +675,10 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
   Widget _buildRouteHealthSummary(OperationalRouteAssessment assessment) {
     final color = switch (assessment.health) {
       RouteHealthState.healthy => AppColors.statusActive,
-      RouteHealthState.caution || RouteHealthState.stale => AppColors.statusStale,
-      RouteHealthState.degraded || RouteHealthState.invalid =>
-        AppColors.alertCritical,
+      RouteHealthState.caution ||
+      RouteHealthState.stale => AppColors.statusStale,
+      RouteHealthState.degraded ||
+      RouteHealthState.invalid => AppColors.alertCritical,
       RouteHealthState.rerouting => AppColors.alertInfo,
       RouteHealthState.offline => AppColors.graphite700,
     };
@@ -694,9 +701,9 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
               Expanded(
                 child: Text(
                   assessment.userMessage,
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w700),
                 ),
               ),
             ],
@@ -705,8 +712,8 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
           Text(
             'Distancia al corredor: ${assessment.distanceFromRouteMeters.isFinite ? assessment.distanceFromRouteMeters.round() : 0} m',
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ],
       ),
@@ -745,9 +752,7 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
 
     final trigger =
         manual ? RerouteTrigger.manual : _routeAssessment?.rerouteTrigger;
-    _routingController.markRerouteStarted(
-      trigger ?? RerouteTrigger.manual,
-    );
+    _routingController.markRerouteStarted(trigger ?? RerouteTrigger.manual);
     _evaluateRoutingState();
 
     try {
@@ -770,7 +775,9 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
         _distanciaKm = routeData['distance'] as double;
         final duration = routeData['duration'] as int;
         _duracionTexto =
-            duration >= 60 ? '${(duration / 60).toStringAsFixed(1)} h' : '$duration min';
+            duration >= 60
+                ? '${(duration / 60).toStringAsFixed(1)} h'
+                : '$duration min';
         _rerouteCandidatePoints = [];
       });
       _routingController.replaceRoute(candidate);
@@ -1098,7 +1105,7 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
+                  children: [
                     Center(
                       child: Container(
                         width: 42,
@@ -1113,20 +1120,20 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
                     Text(
                       meta.label,
                       style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                            fontWeight: FontWeight.w800,
-                          ),
-                ),
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
                     const SizedBox(height: AppSpacing.xs),
-                Text(
+                    Text(
                       alerta.descripcion ?? 'Sin descripción operativa',
                       style: Theme.of(context).textTheme.bodyMedium,
-                ),
+                    ),
                     const SizedBox(height: AppSpacing.md),
                     Text(
                       'Reportado por ${alerta.usuario}',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
-                          ),
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ],
                 ),

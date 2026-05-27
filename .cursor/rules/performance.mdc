@@ -1,0 +1,28 @@
+---
+description: Performance standards for backend APIs, Flutter UI, maps, and realtime flows
+alwaysApply: true
+---
+
+# Performance Rules
+
+The platform must remain responsive under real logistics workloads and unstable networks.
+
+Backend:
+- Add pagination to list endpoints that can grow
+- Avoid repeated MongoDB queries for the same data
+- Use indexes for frequent filters, geospatial queries, and status lookups
+- Keep API responses small and predictable
+- Add request timeouts for external services
+- Avoid blocking operations in request handlers
+
+Flutter:
+- Prevent unnecessary widget rebuilds
+- Keep map rendering efficient with controlled marker and polyline updates
+- Use loading placeholders for slow operations
+- Cache data intentionally when it improves UX and supports offline mode
+- Dispose controllers, streams, timers, and subscriptions correctly
+
+Realtime:
+- Debounce noisy GPS or sync updates where appropriate
+- Reconnect safely without duplicate listeners or duplicate events
+- Prefer incremental updates over full reloads when possible

@@ -15,7 +15,7 @@ class FleetMapMarker extends StatelessWidget {
     super.key,
     required this.status,
     this.initial,
-    this.size = 44,
+    this.size = 38,
     this.heading = 0,
     this.selected = false,
   });
@@ -23,9 +23,10 @@ class FleetMapMarker extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = AppColors.trackingStatusColor(status);
-    final letter = (initial != null && initial!.isNotEmpty)
-        ? initial!.substring(0, 1).toUpperCase()
-        : '?';
+    final letter =
+        (initial != null && initial!.isNotEmpty)
+            ? initial!.substring(0, 1).toUpperCase()
+            : '?';
 
     final marker = SizedBox(
       width: size,
@@ -58,7 +59,9 @@ class FleetMapMarker extends StatelessWidget {
             height: size,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
+              color: Theme.of(
+                context,
+              ).colorScheme.surface.withValues(alpha: 0.96),
               border: Border.all(
                 color: selected ? color : color.withValues(alpha: 0.36),
                 width: selected ? 2.5 : 1.2,
@@ -77,18 +80,22 @@ class FleetMapMarker extends StatelessWidget {
             duration: const Duration(milliseconds: 260),
             curve: Curves.easeOutCubic,
             child: SvgPicture.string(
-              _truckSvg(_hex(color), _hex(Theme.of(context).colorScheme.surface)),
+              _truckSvg(
+                _hex(color),
+                _hex(Theme.of(context).colorScheme.surface),
+              ),
               width: size * 0.58,
               height: size * 0.58,
-              semanticsLabel: 'Vehículo ${AppColors.trackingStatusLabel(status)}',
+              semanticsLabel:
+                  'Vehículo ${AppColors.trackingStatusLabel(status)}',
             ),
           ),
           Positioned(
             right: -1,
             bottom: -1,
             child: Container(
-              width: 19,
-              height: 19,
+              width: 16,
+              height: 16,
               alignment: Alignment.center,
               decoration: BoxDecoration(
                 color: color,
@@ -101,7 +108,7 @@ class FleetMapMarker extends StatelessWidget {
               child: Text(
                 letter,
                 style: const TextStyle(
-                  fontSize: 9,
+                  fontSize: 8,
                   fontWeight: FontWeight.w800,
                   color: Colors.white,
                 ),

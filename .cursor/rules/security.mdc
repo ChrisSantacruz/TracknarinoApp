@@ -1,0 +1,26 @@
+---
+description: Security requirements for authentication, APIs, alerts, and sensitive data
+alwaysApply: true
+---
+
+# Security Rules
+
+TrackNariño handles sensitive logistics, GPS, identity, and security alert data.
+
+Mandatory:
+- Protect every sensitive backend route with authentication and role checks
+- Never expose secrets, tokens, credentials, or internal errors to clients
+- Store configuration in environment variables
+- Validate and sanitize all user input
+- Validate authorization on every resource access
+- Use JWT carefully with expiration and server-side permission checks
+- Persist security alerts reliably before triggering secondary side effects
+- Log security-relevant events without leaking private data
+- Treat GPS data as sensitive personal and operational information
+- Avoid hardcoded credentials, URLs, keys, or admin identifiers
+
+Never:
+- Trust client-provided roles, IDs, prices, coordinates, or ownership
+- Return raw database errors to the frontend
+- Skip validation for internal endpoints
+- Add mock authentication or fake permission checks to production code

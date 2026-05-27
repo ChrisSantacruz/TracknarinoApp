@@ -1,0 +1,24 @@
+---
+description: Production-readiness requirements for stability, observability, and release quality
+alwaysApply: true
+---
+
+# Production Rules
+
+The project must become production-ready.
+
+Mandatory:
+- Remove dead code
+- Remove unused imports
+- Optimize performance
+- Add loading states
+- Add retry systems
+- Add logs
+- Add analytics hooks
+- Add crash prevention
+- Add API timeout handling
+- Add connection recovery
+- Optimize map rendering
+- Prevent memory leaks
+
+Everything must feel stable and professional.

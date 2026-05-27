@@ -1,39 +1,33 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
+
 import '../../models/user_model.dart';
 import '../../services/auth_service.dart';
 import '../../services/location_service.dart';
-import 'package:image_picker/image_picker.dart';
-import 'dart:io';
+import '../../theme/app_colors.dart';
+import '../../theme/app_spacing.dart';
+import '../../widgets/operational/premium_operational_widgets.dart';
 
 class PerfilCamioneroScreen extends StatefulWidget {
   final User? usuario;
   final bool embedded;
 
-  const PerfilCamioneroScreen({
-    super.key,
-    this.usuario,
-    this.embedded = false,
-  });
+  const PerfilCamioneroScreen({super.key, this.usuario, this.embedded = false});
 
   @override
   State<PerfilCamioneroScreen> createState() => _PerfilCamioneroScreenState();
 }
 
 class _PerfilCamioneroScreenState extends State<PerfilCamioneroScreen> {
-  File? _profileImage;
   final ImagePicker _picker = ImagePicker();
-  bool _isLoading = false;
   final List<String> _metodosPago = ['Visa', 'Nequi', 'Efectivo'];
   String? _selectedMetodoPago;
+  Uint8List? _avatarBytes;
   bool _isDisponible = true;
-  
-  final Map<String, dynamic> _estadisticas = {
-    'viajesCompletados': null,
-    'kilometrosRecorridos': null,
-    'calificacionPromedio': null,
-    'ingresosMes': null,
-  };
+  bool _isLoading = false;
 
   @override
   void initState() {
@@ -41,56 +35,33 @@ class _PerfilCamioneroScreenState extends State<PerfilCamioneroScreen> {
     _selectedMetodoPago = widget.usuario?.metodoPago;
     _cargarEstadoInicial();
     _cargarPerfilCamionero();
-    
-    // Inicializar estadísticas con datos del usuario si están disponibles
-    if (widget.usuario != null) {
-      final usuario = widget.usuario!;
-      if (usuario.calificacion != null || usuario.viajesCompletados != null) {
-        _estadisticas['viajesCompletados'] = usuario.viajesCompletados ?? 0;
-        _estadisticas['calificacionPromedio'] = usuario.calificacion ?? 0.0;
-      }
-    }
   }
-  
-  // Cargar estado inicial de disponibilidad
+
   Future<void> _cargarEstadoInicial() async {
-    final authService = Provider.of<AuthService>(context, listen: false);
+    final authService = context.read<AuthService>();
     final disponible = await authService.obtenerEstadoDisponible();
-    if (mounted) {
-      setState(() {
-        _isDisponible = disponible;
-      });
-    }
+    if (mounted) setState(() => _isDisponible = disponible);
   }
-  
-  // Cargar datos del perfil desde el backend
+
   Future<void> _cargarPerfilCamionero() async {
-    setState(() {
-      _isLoading = true;
-    });
-    
+    setState(() => _isLoading = true);
+
     try {
-      // Obtener datos del perfil desde el backend
-      final authService = Provider.of<AuthService>(context, listen: false);
-      final usuario = await authService.obtenerPerfilCamionero();
-      
-      if (usuario != null) {
+      final usuario =
+          await context.read<AuthService>().obtenerPerfilCamionero();
+      if (usuario != null && mounted) {
         setState(() {
           _selectedMetodoPago = usuario.metodoPago;
           _isDisponible = usuario.isDisponible;
-          // Actualizar otras estadísticas si es necesario
         });
       }
     } catch (e) {
       debugPrint('Error al cargar perfil: $e');
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // Función para seleccionar una foto de perfil
   Future<void> _pickImage() async {
     try {
       final pickedFile = await _picker.pickImage(
@@ -99,523 +70,486 @@ class _PerfilCamioneroScreenState extends State<PerfilCamioneroScreen> {
         maxHeight: 512,
         imageQuality: 85,
       );
-      
-      if (pickedFile != null) {
-        // En Flutter Web, usar Network/Memory image en lugar de File
-        final bytes = await pickedFile.readAsBytes();
-        
-        setState(() {
-          // Guardar la ruta para referencia
-          _profileImage = File(pickedFile.path);
-        });
-        
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Imagen seleccionada. Funcionalidad de subida pendiente.'),
-              duration: Duration(seconds: 2),
-            ),
-          );
-        }
-        
-        // TODO: Aquí iría el código para subir la imagen al servidor
-        // await _subirImagenAlServidor(bytes);
-      }
+      if (pickedFile == null || !mounted) return;
+      final bytes = await pickedFile.readAsBytes();
+      if (!mounted) return;
+
+      setState(() => _avatarBytes = bytes);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Imagen actualizada en esta sesión. Subida al servidor pendiente.',
+          ),
+        ),
+      );
     } catch (e) {
-      debugPrint('Error al seleccionar imagen: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al seleccionar imagen: $e')),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo seleccionar imagen: $e')),
+      );
     }
   }
 
-  // Función para actualizar método de pago
   Future<void> _actualizarMetodoPago(String metodoPago) async {
+    final previous = _selectedMetodoPago;
     setState(() {
       _isLoading = true;
       _selectedMetodoPago = metodoPago;
     });
 
     try {
-      await Provider.of<AuthService>(context, listen: false).actualizarMetodoPago(metodoPago);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Método de pago actualizado')),
-        );
-      }
+      await context.read<AuthService>().actualizarMetodoPago(metodoPago);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Método de pago actualizado')),
+      );
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _selectedMetodoPago = widget.usuario?.metodoPago;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al actualizar: $e')),
-        );
-      }
+      if (!mounted) return;
+      setState(() => _selectedMetodoPago = previous);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('No se pudo actualizar: $e')));
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _isLoading = false);
     }
   }
-  
-  // Función para actualizar disponibilidad
+
   Future<void> _toggleDisponibilidad() async {
-    setState(() {
-      _isLoading = true;
-    });
+    setState(() => _isLoading = true);
 
     try {
       final nuevoEstado = !_isDisponible;
-      
-      // Guardar en AuthService
-      final authService = Provider.of<AuthService>(context, listen: false);
+      final authService = context.read<AuthService>();
+      final locationService = context.read<LocationService>();
+
       await authService.guardarEstadoDisponible(nuevoEstado);
-      
-      // Iniciar o detener el servicio de ubicación según disponibilidad
-      final locationService = Provider.of<LocationService>(context, listen: false);
       if (nuevoEstado) {
         await locationService.startTracking();
       } else {
         locationService.stopTracking();
       }
-      
-      setState(() {
-        _isDisponible = nuevoEstado;
-      });
-      
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Ahora estás ${_isDisponible ? 'disponible' : 'no disponible'} para viajes')),
-        );
-      }
+
+      if (!mounted) return;
+      setState(() => _isDisponible = nuevoEstado);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'Estado actualizado: ${_isDisponible ? 'disponible' : 'offline'}',
+          ),
+        ),
+      );
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al actualizar disponibilidad: $e')),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo cambiar disponibilidad: $e')),
+      );
     } finally {
-      setState(() {
-        _isLoading = false;
-      });
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  // Función para cerrar sesión
   Future<void> _cerrarSesion() async {
     try {
-      // Detener el servicio de ubicación antes de cerrar sesión
-      final locationService = Provider.of<LocationService>(context, listen: false);
-      locationService.stopTracking();
-      
-      await Provider.of<AuthService>(context, listen: false).logout();
+      context.read<LocationService>().stopTracking();
+      await context.read<AuthService>().logout();
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error al cerrar sesión: $e')),
-        );
-      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('No se pudo cerrar sesión: $e')));
     }
-  }
-
-  // Función para registrar un vehículo
-  Future<void> _registrarVehiculo() async {
-    // Aquí iría el código para registrar el vehículo
-    // Por ejemplo, mostrar un formulario para ingresar los datos del vehículo
-    // y luego enviar estos datos al servidor
-    debugPrint('Registrar vehículo');
   }
 
   @override
   Widget build(BuildContext context) {
-    final authService = Provider.of<AuthService>(context);
+    final authService = context.watch<AuthService>();
     final usuario = widget.usuario ?? authService.currentUser;
 
     if (usuario == null) {
-      return const Center(child: Text('No hay información del usuario'));
-    }
-
-    final body = RefreshIndicator(
-        onRefresh: _cargarPerfilCamionero,
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          child: Column(
-            children: [
-              // Banner superior con foto de perfil
-              Stack(
-                clipBehavior: Clip.none,
-                alignment: Alignment.center,
-                children: [
-                  // Banner superior
-                  Container(
-                    height: 180,
-                    width: double.infinity,
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [
-                          Theme.of(context).primaryColor,
-                          Theme.of(context).primaryColor.withAlpha(179), // 0.7 * 255 = 178.5 ≈ 179
-                        ],
-                      ),
-                    ),
-                  ),
-                  
-                  // Foto de perfil
-                  Positioned(
-                    bottom: -50,
-                    child: GestureDetector(
-                      onTap: _pickImage,
-                      child: CircleAvatar(
-                        radius: 60,
-                        backgroundColor: Colors.white,
-                        child: CircleAvatar(
-                          radius: 56,
-                          backgroundImage: _profileImage != null 
-                            ? FileImage(_profileImage!) as ImageProvider
-                            : const AssetImage('assets/images/default_profile.png'),
-                          backgroundColor: Colors.grey[200],
-                          child: _profileImage == null 
-                            ? Icon(
-                                Icons.person,
-                                size: 80,
-                                color: Colors.grey[400],
-                              )
-                            : null,
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-              
-              // Información del perfil
-              const SizedBox(height: 60),
-              
-              // Nombre del usuario
-              Text(
-                usuario.nombre,
-                style: const TextStyle(
-                  fontSize: 22,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-              const SizedBox(height: 4),
-              
-              // Correo
-              Text(
-                usuario.correo,
-                style: TextStyle(
-                  fontSize: 16,
-                  color: Colors.grey[600],
-                ),
-              ),
-              
-              const SizedBox(height: 16),
-              
-              _buildRatingSummary(),
-              
-              const SizedBox(height: 24),
-              
-              // Estado del camionero con toggle
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 24),
-                padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                decoration: BoxDecoration(
-                  color: _isDisponible 
-                    ? Colors.green.withAlpha(26) // 0.1 * 255 = 25.5 ≈ 26
-                    : Colors.red.withAlpha(26),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 10,
-                      height: 10,
-                      decoration: BoxDecoration(
-                        color: _isDisponible ? Colors.green : Colors.red,
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _isDisponible ? 'Disponible' : 'No disponible',
-                      style: TextStyle(
-                        color: _isDisponible ? Colors.green : Colors.red,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                    _isLoading
-                      ? const SizedBox(
-                          width: 24,
-                          height: 24,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : Switch(
-                          value: _isDisponible,
-                          onChanged: (_) => _toggleDisponibilidad(),
-                          activeColor: Colors.green,
-                        ),
-                  ],
-                ),
-              ),
-              
-              const SizedBox(height: 24),
-              
-              // Estadísticas del camionero
-              _buildStatsGrid(),
-              
-              const SizedBox(height: 16),
-              
-              // Secciones de información
-              _buildInfoSection('Información Personal', [
-                _buildInfoRow('Teléfono', usuario.telefono ?? 'No especificado'),
-                _buildInfoRow('Empresa afiliada', usuario.empresaAfiliada ?? 'No especificada'),
-                _buildInfoRow('Documento', usuario.numeroCedula ?? 'No especificado'),
-              ]),
-              
-              _buildInfoSection('Información del Camión', [
-                _buildInfoRow('Tipo', usuario.camion?['tipoVehiculo'] ?? 'No especificado'),
-                _buildInfoRow('Placa', usuario.camion?['placa'] ?? 'No especificada'),
-                _buildInfoRow('Marca', usuario.camion?['marca'] ?? 'No especificada'),
-                _buildInfoRow('Modelo', usuario.camion?['modelo'] ?? 'No especificado'),
-                _buildInfoRow('Capacidad', '${usuario.camion?['capacidadCarga'] ?? 'No especificada'} kg'),
-              ]),
-              
-              _buildInfoSection('Método de Pago', [
-                Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  child: _isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : Wrap(
-                        spacing: 8,
-                        children: _metodosPago.map((metodoPago) {
-                          final isSelected = _selectedMetodoPago == metodoPago;
-                          return ChoiceChip(
-                            label: Text(metodoPago),
-                            selected: isSelected,
-                            selectedColor: Theme.of(context).primaryColor.withAlpha(51), // 0.2 * 255 = 51
-                            onSelected: (_) => _actualizarMetodoPago(metodoPago),
-                          );
-                        }).toList(),
-                      ),
-                ),
-              ]),
-              
-              const SizedBox(height: 32),
-              
-              // Botón para cerrar sesión
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 24),
-                child: ElevatedButton.icon(
-                  onPressed: _cerrarSesion,
-                  icon: const Icon(Icons.logout),
-                  label: const Text('Cerrar sesión'),
-                  style: ElevatedButton.styleFrom(
-                    foregroundColor: Colors.red,
-                    backgroundColor: Colors.red.withAlpha(26), // 0.1 * 255 = 25.5 ≈ 26
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                ),
-              ),
-              
-              const SizedBox(height: 40),
-            ],
-          ),
-        ),
-    );
-
-    if (widget.embedded) return body;
-
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('Perfil'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.directions_car),
-            onPressed: _registrarVehiculo,
-          ),
-        ],
-      ),
-      body: body,
-    );
-  }
-  
-  Widget _buildRatingSummary() {
-    final rating = _estadisticas['calificacionPromedio'] as double?;
-
-    if (rating == null) {
-      return const Text(
-        'Sin calificación disponible',
-        style: TextStyle(
-          fontSize: 16,
-          fontWeight: FontWeight.w500,
-        ),
+      return const PremiumGradientScaffold(
+        child: Center(child: Text('No hay información del usuario')),
       );
     }
 
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.center,
-      children: [
-        ...List.generate(5, (index) {
-          return Icon(
-            index < rating.floor()
-                ? Icons.star
-                : index < rating
-                    ? Icons.star_half
-                    : Icons.star_border,
-            color: Colors.amber,
-            size: 24,
-          );
-        }),
-        const SizedBox(width: 8),
-        Text(
-          '$rating',
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildStatsGrid() {
-    return GridView.count(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
-      physics: const NeverScrollableScrollPhysics(),
-      shrinkWrap: true,
-      crossAxisCount: 2,
-      crossAxisSpacing: 12,
-      mainAxisSpacing: 12,
-      childAspectRatio: 1.5,
-      children: [
-        _buildStatCard(
-          'Viajes', 
-          _estadisticas['viajesCompletados']?.toString() ?? 'No disponible',
-          Icons.directions_car,
-          Colors.blue
-        ),
-        _buildStatCard(
-          'Kilómetros', 
-          _estadisticas['kilometrosRecorridos']?.toString() ?? 'No disponible',
-          Icons.route,
-          Colors.green
-        ),
-        _buildStatCard(
-          'Ingresos (mes)', 
-          _estadisticas['ingresosMes'] != null
-              ? '\$${(_estadisticas['ingresosMes'] / 1000).round()}K'
-              : 'No disponible',
-          Icons.attach_money,
-          Colors.amber
-        ),
-        _buildStatCard(
-          'Disponibilidad', 
-          _isDisponible ? 'Activa' : 'Inactiva',
-          Icons.access_time_filled,
-          _isDisponible ? Colors.green : Colors.red
-        ),
-      ],
-    );
-  }
-  
-  Widget _buildStatCard(String title, String value, IconData icon, Color color) {
-    return Card(
-      elevation: 2,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              color: color,
-              size: 24,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: const TextStyle(
-                fontSize: 20,
-                fontWeight: FontWeight.bold,
+    final body = PremiumGradientScaffold(
+      safeArea: !widget.embedded,
+      child: RefreshIndicator(
+        onRefresh: _cargarPerfilCamionero,
+        child: CustomScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          slivers: [
+            if (!widget.embedded)
+              SliverAppBar(
+                pinned: true,
+                backgroundColor: Colors.transparent,
+                foregroundColor: Colors.white,
+                title: const Text('Perfil'),
               ),
-            ),
-            const SizedBox(height: 2),
-            Text(
-              title,
-              style: TextStyle(
-                fontSize: 14,
-                color: Colors.grey[600],
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.lg,
+                AppSpacing.lg,
+                AppSpacing.lg,
+                AppSpacing.xxl,
+              ),
+              sliver: SliverToBoxAdapter(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _ProfileHero(
+                      usuario: usuario,
+                      avatarBytes: _avatarBytes,
+                      disponible: _isDisponible,
+                      loading: _isLoading,
+                      onAvatarTap: _pickImage,
+                      onToggle: _toggleDisponibilidad,
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    _MetricsRow(usuario: usuario),
+                    const SizedBox(height: AppSpacing.md),
+                    _VehicleCard(usuario: usuario),
+                    const SizedBox(height: AppSpacing.md),
+                    _PaymentCard(
+                      methods: _metodosPago,
+                      selected: _selectedMetodoPago,
+                      loading: _isLoading,
+                      onSelected: _actualizarMetodoPago,
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    _SettingsCard(onLogout: _cerrarSesion),
+                  ],
+                ),
               ),
             ),
           ],
         ),
       ),
     );
-  }
 
-  Widget _buildInfoSection(String title, List<Widget> children) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.grey.withAlpha(26), // 0.1 * 255 = 25.5 ≈ 26
-            spreadRadius: 1,
-            blurRadius: 5,
+    return body;
+  }
+}
+
+class _ProfileHero extends StatelessWidget {
+  final User usuario;
+  final Uint8List? avatarBytes;
+  final bool disponible;
+  final bool loading;
+  final VoidCallback onAvatarTap;
+  final VoidCallback onToggle;
+
+  const _ProfileHero({
+    required this.usuario,
+    required this.avatarBytes,
+    required this.disponible,
+    required this.loading,
+    required this.onAvatarTap,
+    required this.onToggle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final statusColor =
+        disponible ? AppColors.emerald400 : AppColors.statusOffline;
+
+    return PremiumGlassCard(
+      borderColor: statusColor.withValues(alpha: 0.32),
+      padding: const EdgeInsets.all(AppSpacing.lg),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              GestureDetector(
+                onTap: onAvatarTap,
+                child: Container(
+                  width: 72,
+                  height: 72,
+                  decoration: BoxDecoration(
+                    shape: BoxShape.circle,
+                    gradient: LinearGradient(
+                      colors: [
+                        AppColors.emerald400.withValues(alpha: 0.9),
+                        AppColors.graphite800,
+                      ],
+                    ),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.18),
+                    ),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child:
+                      avatarBytes == null
+                          ? Stack(
+                            children: [
+                              Center(
+                                child: Text(
+                                  usuario.nombre.isEmpty
+                                      ? 'TN'
+                                      : usuario.nombre
+                                          .trim()
+                                          .substring(0, 1)
+                                          .toUpperCase(),
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 28,
+                                  ),
+                                ),
+                              ),
+                              const Positioned(
+                                right: 6,
+                                bottom: 6,
+                                child: Icon(
+                                  Icons.photo_camera_outlined,
+                                  size: 16,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          )
+                          : Image.memory(avatarBytes!, fit: BoxFit.cover),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      usuario.nombre,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w900,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      usuario.correo,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: AppColors.graphite300,
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    PremiumStatusPill(
+                      label: disponible ? 'Disponible' : 'Offline',
+                      color: statusColor,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Estado operativo del conductor',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              loading
+                  ? const SizedBox(
+                    width: 24,
+                    height: 24,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: AppColors.emerald400,
+                    ),
+                  )
+                  : Switch.adaptive(
+                    value: disponible,
+                    activeThumbColor: AppColors.emerald400,
+                    onChanged: (_) => onToggle(),
+                  ),
+            ],
           ),
         ],
       ),
+    );
+  }
+}
+
+class _MetricsRow extends StatelessWidget {
+  final User usuario;
+
+  const _MetricsRow({required this.usuario});
+
+  @override
+  Widget build(BuildContext context) {
+    final viajes = usuario.viajesCompletados?.toString() ?? 'Sin dato';
+    final rating =
+        usuario.calificacion == null
+            ? 'Sin dato'
+            : usuario.calificacion!.toStringAsFixed(1);
+
+    return GridView.count(
+      crossAxisCount: 2,
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      crossAxisSpacing: AppSpacing.sm,
+      mainAxisSpacing: AppSpacing.sm,
+      childAspectRatio: 1.45,
+      children: [
+        PremiumMetricTile(
+          label: 'Viajes completados',
+          value: viajes,
+          icon: Icons.route_outlined,
+        ),
+        PremiumMetricTile(
+          label: 'Calificación',
+          value: rating,
+          icon: Icons.star_border_rounded,
+          color: AppColors.statusStale,
+        ),
+      ],
+    );
+  }
+}
+
+class _VehicleCard extends StatelessWidget {
+  final User usuario;
+
+  const _VehicleCard({required this.usuario});
+
+  @override
+  Widget build(BuildContext context) {
+    final camion = usuario.camion ?? const {};
+    final unidadCapacidad = camion['unidadCapacidad'] ?? 'kg';
+
+    return PremiumGlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const PremiumScreenHeader(
+            eyebrow: 'Documentos',
+            title: 'Vehículo y operación',
+            subtitle: 'Datos reales del perfil del conductor.',
+          ),
+          const SizedBox(height: AppSpacing.md),
+          PremiumInfoRow(
+            icon: Icons.local_shipping_outlined,
+            label: 'Tipo',
+            value: '${camion['tipoVehiculo'] ?? 'No especificado'}',
+          ),
+          PremiumInfoRow(
+            icon: Icons.confirmation_number_outlined,
+            label: 'Placa',
+            value: '${camion['placa'] ?? 'No especificada'}',
+            color: AppColors.statusSyncing,
+          ),
+          PremiumInfoRow(
+            icon: Icons.precision_manufacturing_outlined,
+            label: 'Marca / modelo',
+            value:
+                '${camion['marca'] ?? 'No especificada'} ${camion['modelo'] ?? ''}'
+                    .trim(),
+            color: AppColors.statusStale,
+          ),
+          PremiumInfoRow(
+            icon:
+                unidadCapacidad == 'pasajeros'
+                    ? Icons.groups_outlined
+                    : Icons.scale_outlined,
+            label: 'Capacidad',
+            value:
+                '${camion['capacidadCarga'] ?? 'No especificada'} $unidadCapacidad',
+            color: AppColors.emerald300,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PaymentCard extends StatelessWidget {
+  final List<String> methods;
+  final String? selected;
+  final bool loading;
+  final ValueChanged<String> onSelected;
+
+  const _PaymentCard({
+    required this.methods,
+    required this.selected,
+    required this.loading,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return PremiumGlassCard(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            title,
-            style: TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.bold,
-              color: Theme.of(context).primaryColor,
+            'Método de pago',
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
             ),
           ),
-          const Divider(height: 24),
-          ...children,
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'Selecciona solo métodos admitidos por el backend actual.',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppColors.graphite300),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Wrap(
+            spacing: AppSpacing.xs,
+            runSpacing: AppSpacing.xs,
+            children:
+                methods.map((method) {
+                  final isSelected = method == selected;
+                  return ChoiceChip(
+                    label: Text(method),
+                    selected: isSelected,
+                    onSelected: loading ? null : (_) => onSelected(method),
+                  );
+                }).toList(),
+          ),
         ],
       ),
     );
   }
+}
 
-  Widget _buildInfoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+class _SettingsCard extends StatelessWidget {
+  final VoidCallback onLogout;
+
+  const _SettingsCard({required this.onLogout});
+
+  @override
+  Widget build(BuildContext context) {
+    return PremiumGlassCard(
+      child: Column(
         children: [
-          Text(
-            label,
-            style: TextStyle(
-              color: Colors.grey[700],
-              fontWeight: FontWeight.w500,
-            ),
+          PremiumInfoRow(
+            icon: Icons.notifications_active_outlined,
+            label: 'Notificaciones',
+            value: 'Gestionadas por el servicio actual',
+            color: AppColors.statusSyncing,
           ),
-          Text(
-            value,
-            style: const TextStyle(
-              fontWeight: FontWeight.w400,
-            ),
+          PremiumInfoRow(
+            icon: Icons.sync_outlined,
+            label: 'Sincronización',
+            value: 'Offline queue y realtime activos',
+            color: AppColors.emerald400,
+          ),
+          PremiumInfoRow(
+            icon: Icons.logout_rounded,
+            label: 'Sesión',
+            value: 'Cerrar sesión',
+            color: AppColors.alertCritical,
+            onTap: onLogout,
           ),
         ],
       ),
     );
   }
-} 
+}

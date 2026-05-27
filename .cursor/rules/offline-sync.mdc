@@ -1,0 +1,25 @@
+---
+description: Offline-first and synchronization requirements
+globs: trackarino_app/lib/**/*.dart,Backend/**/*.js
+alwaysApply: false
+---
+
+# Offline Sync Rules
+
+The app must work in poor internet conditions.
+
+Requirements:
+- Store pending alerts locally
+- Sync automatically when connection returns
+- Persist GPS points offline
+- Queue unsent actions
+- Retry failed requests
+- Prevent duplicate syncs
+- Use local database caching
+- Detect connectivity changes
+- Show sync status to user
+
+Critical alerts:
+- Must NEVER be lost
+- Must retry automatically
+- Must persist after app restart

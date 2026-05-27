@@ -1,4 +1,7 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/fleet_tracking_item.dart';
@@ -9,12 +12,12 @@ import '../../state/session_bootstrap.dart';
 import '../../services/contratista_tracking_service.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
-import '../../widgets/operational/operational_card.dart';
 import '../../widgets/operational/operational_empty_state.dart';
 import '../../widgets/operational/operational_error_state.dart';
 import '../../widgets/operational/operational_skeleton.dart';
 import '../../widgets/operational/operational_status_chip.dart';
 import '../../widgets/operational/operational_svg_icon.dart';
+import '../../widgets/operational/premium_operational_widgets.dart';
 import 'crear_oportunidad_screen.dart';
 import 'seguimiento_screen.dart';
 
@@ -32,6 +35,8 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
   bool _fleetLoading = true;
   String? _fleetError;
   List<FleetTrackingItem> _fleet = [];
+  final ImagePicker _imagePicker = ImagePicker();
+  Uint8List? _contractorAvatarBytes;
 
   @override
   void initState() {
@@ -74,13 +79,50 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
     await auth.logout();
   }
 
+  Future<void> _pickContractorAvatar() async {
+    try {
+      final image = await _imagePicker.pickImage(
+        source: ImageSource.gallery,
+        maxWidth: 512,
+        maxHeight: 512,
+        imageQuality: 85,
+      );
+      if (image == null) return;
+      final bytes = await image.readAsBytes();
+      if (!mounted) return;
+      setState(() => _contractorAvatarBytes = bytes);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Foto actualizada en esta sesión. Falta endpoint para persistirla.',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo seleccionar la foto: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
+        backgroundColor: AppColors.inkBlack.withValues(alpha: 0.96),
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        shape: Border(
+          bottom: BorderSide(color: Colors.white.withValues(alpha: 0.06)),
+        ),
         title: Text(
           _titleForIndex(_selectedIndex),
-          style: Theme.of(context).textTheme.titleLarge,
+          style: Theme.of(context).textTheme.titleLarge?.copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+          ),
         ),
         actions: [
           if (_selectedIndex == 0)
@@ -102,42 +144,94 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
           ),
         ],
       ),
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: [
-          _buildHomePage(),
-          const CrearOportunidadScreen(embedded: true),
-          const SeguimientoScreen(),
-          _buildPerfilContratista(),
-        ],
+      backgroundColor: AppColors.inkBlack,
+      body: PremiumGradientScaffold(
+        safeArea: false,
+        child: IndexedStack(
+          index: _selectedIndex,
+          children: [
+            _buildHomePage(),
+            CrearOportunidadScreen(
+              embedded: true,
+              onPublished: () {
+                setState(() => _selectedIndex = 0);
+                _loadFleetSummary();
+              },
+            ),
+            const SeguimientoScreen(),
+            _buildPerfilContratista(),
+          ],
+        ),
       ),
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _selectedIndex,
-        onDestinationSelected: (index) {
-          setState(() => _selectedIndex = index);
-        },
-        destinations: const [
-          NavigationDestination(
-            icon: Icon(Icons.dashboard_outlined),
-            selectedIcon: Icon(Icons.dashboard),
-            label: 'Operaciones',
+      extendBody: false,
+      bottomNavigationBar: Padding(
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.md,
+          0,
+          AppSpacing.md,
+          AppSpacing.sm,
+        ),
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(24),
+          child: NavigationBarTheme(
+            data: NavigationBarThemeData(
+              backgroundColor: AppColors.graphite950.withValues(alpha: 0.98),
+              indicatorColor: AppColors.emerald400.withValues(alpha: 0.18),
+              indicatorShape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(18),
+              ),
+              labelTextStyle: WidgetStateProperty.resolveWith(
+                (states) => TextStyle(
+                  color:
+                      states.contains(WidgetState.selected)
+                          ? AppColors.emerald300
+                          : AppColors.graphite300,
+                  fontWeight: FontWeight.w800,
+                  fontSize: 11,
+                ),
+              ),
+              iconTheme: WidgetStateProperty.resolveWith(
+                (states) => IconThemeData(
+                  color:
+                      states.contains(WidgetState.selected)
+                          ? AppColors.emerald300
+                          : AppColors.graphite300,
+                ),
+              ),
+            ),
+            child: NavigationBar(
+              height: 64,
+              elevation: 0,
+              labelBehavior: NavigationDestinationLabelBehavior.alwaysShow,
+              selectedIndex: _selectedIndex,
+              onDestinationSelected: (index) {
+                setState(() => _selectedIndex = index);
+              },
+              destinations: const [
+                NavigationDestination(
+                  icon: Icon(Icons.dashboard_outlined),
+                  selectedIcon: Icon(Icons.dashboard),
+                  label: 'Operaciones',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.add_circle_outline),
+                  selectedIcon: Icon(Icons.add_circle),
+                  label: 'Crear viaje',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.map_outlined),
+                  selectedIcon: Icon(Icons.map),
+                  label: 'Flota',
+                ),
+                NavigationDestination(
+                  icon: Icon(Icons.person_outline),
+                  selectedIcon: Icon(Icons.person),
+                  label: 'Perfil',
+                ),
+              ],
+            ),
           ),
-          NavigationDestination(
-            icon: Icon(Icons.add_circle_outline),
-            selectedIcon: Icon(Icons.add_circle),
-            label: 'Crear viaje',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.map_outlined),
-            selectedIcon: Icon(Icons.map),
-            label: 'Flota',
-          ),
-          NavigationDestination(
-            icon: Icon(Icons.person_outline),
-            selectedIcon: Icon(Icons.person),
-            label: 'Perfil',
-          ),
-        ],
+        ),
       ),
       floatingActionButton:
           _selectedIndex == 0
@@ -175,23 +269,15 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Hola, ${widget.usuario.nombre}',
-              style: Theme.of(context).textTheme.headlineMedium,
-            ),
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              widget.usuario.empresa ?? 'Contratista',
-              style: Theme.of(context).textTheme.bodySmall,
+            PremiumScreenHeader(
+              eyebrow: 'Contratista',
+              title: 'Centro operativo',
+              subtitle:
+                  '${widget.usuario.empresa ?? 'Contratista'} · cargas, flota y seguimiento en vivo.',
             ),
             const SizedBox(height: AppSpacing.xl),
-            Text(
-              'Estado de flota',
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: AppSpacing.sm),
             if (_fleetLoading)
-              const OperationalCard(
+              const PremiumGlassCard(
                 child: Column(
                   children: [
                     OperationalSkeleton(height: 14, width: double.infinity),
@@ -201,7 +287,7 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
                 ),
               )
             else if (_fleetError != null)
-              OperationalCard(
+              PremiumGlassCard(
                 child: OperationalErrorState(
                   message: _fleetError!,
                   onRetry: _loadFleetSummary,
@@ -210,17 +296,14 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
             else
               _buildFleetSummaryCard(),
             const SizedBox(height: AppSpacing.lg),
-            OperationalCard(
+            PremiumGlassCard(
               onTap: () => setState(() => _selectedIndex = 1),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
-                      Icon(
-                        Icons.add_road,
-                        color: Theme.of(context).colorScheme.primary,
-                      ),
+                      Icon(Icons.add_road, color: AppColors.emerald400),
                       const SizedBox(width: AppSpacing.sm),
                       Text(
                         'Publicar carga',
@@ -231,7 +314,9 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
                   const SizedBox(height: AppSpacing.sm),
                   Text(
                     'Crea una oportunidad con origen, destino y precio reales.',
-                    style: Theme.of(context).textTheme.bodySmall,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppColors.graphite300,
+                    ),
                   ),
                   const SizedBox(height: AppSpacing.md),
                   Align(
@@ -252,7 +337,7 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
 
   Widget _buildFleetSummaryCard() {
     if (_fleet.isEmpty) {
-      return OperationalCard(
+      return PremiumGlassCard(
         child: OperationalEmptyState(
           icon: Icons.local_shipping_outlined,
           title: 'Sin camioneros con ubicación',
@@ -264,7 +349,7 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
       );
     }
 
-    return OperationalCard(
+    return PremiumGlassCard(
       onTap: () => setState(() => _selectedIndex = 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -273,7 +358,10 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
             children: [
               Text(
                 '${_fleet.length} camionero(s) en flota',
-                style: Theme.of(context).textTheme.titleMedium,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w900,
+                ),
               ),
               const Spacer(),
               const Icon(Icons.chevron_right),
@@ -298,7 +386,9 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
           const SizedBox(height: AppSpacing.md),
           Text(
             'Datos desde API de flota en tiempo real. Sin métricas estimadas.',
-            style: Theme.of(context).textTheme.bodySmall,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppColors.graphite300),
           ),
         ],
       ),
@@ -315,18 +405,128 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
 
   Widget _buildPerfilContratista() {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(AppSpacing.md),
-      child: OperationalCard(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Perfil', style: Theme.of(context).textTheme.titleLarge),
-            const SizedBox(height: AppSpacing.lg),
-            _profileRow('Nombre', widget.usuario.nombre),
-            _profileRow('Empresa', widget.usuario.empresa ?? '—'),
-            _profileRow('Correo', widget.usuario.correo),
-          ],
-        ),
+      padding: const EdgeInsets.fromLTRB(
+        AppSpacing.md,
+        AppSpacing.md,
+        AppSpacing.md,
+        AppSpacing.xxl,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          PremiumGlassCard(
+            borderColor: AppColors.emerald400.withValues(alpha: 0.22),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    InkWell(
+                      onTap: _pickContractorAvatar,
+                      borderRadius: BorderRadius.circular(24),
+                      child: _ContractorAvatar(
+                        imageBytes: _contractorAvatarBytes,
+                        name: widget.usuario.nombre,
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.md),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          PremiumStatusPill(
+                            label: 'Contratista',
+                            color: AppColors.emerald400,
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          Text(
+                            widget.usuario.nombre,
+                            style: Theme.of(
+                              context,
+                            ).textTheme.headlineSmall?.copyWith(
+                              color: Colors.white,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.xs),
+                          Text(
+                            widget.usuario.empresa ?? 'Empresa sin registrar',
+                            style: Theme.of(context).textTheme.bodyMedium
+                                ?.copyWith(color: AppColors.graphite300),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: AppSpacing.md),
+                FilledButton.tonalIcon(
+                  onPressed: _pickContractorAvatar,
+                  icon: const Icon(Icons.photo_camera_outlined),
+                  label: const Text('Cambiar foto'),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          PremiumGlassCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const _ProfileSectionHeader(
+                  title: 'Datos de operación',
+                  subtitle: 'Información real de la sesión autenticada.',
+                ),
+                const SizedBox(height: AppSpacing.md),
+                _profileRow('Correo', widget.usuario.correo),
+                _profileRow('Teléfono', widget.usuario.telefono ?? 'Sin dato'),
+                _profileRow('Empresa', widget.usuario.empresa ?? 'Sin dato'),
+                _profileRow('Rol', widget.usuario.tipoUsuario),
+                _profileRow('ID de cuenta', widget.usuario.id ?? 'Sin dato'),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          PremiumGlassCard(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const _ProfileSectionHeader(
+                  title: 'Estado de flota',
+                  subtitle: 'Resumen vivo, sin métricas simuladas.',
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Wrap(
+                  spacing: AppSpacing.sm,
+                  runSpacing: AppSpacing.sm,
+                  children: [
+                    _summaryChip(
+                      'Activos',
+                      _activeCount,
+                      AppColors.statusActive,
+                    ),
+                    _summaryChip(
+                      'Señal antigua',
+                      _staleCount,
+                      AppColors.statusStale,
+                    ),
+                    _summaryChip(
+                      'Sin señal',
+                      _offlineCount,
+                      AppColors.statusOffline,
+                    ),
+                    _summaryChip(
+                      'Sin ubicación',
+                      _noLocationCount,
+                      AppColors.graphite700,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -346,6 +546,79 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _ContractorAvatar extends StatelessWidget {
+  final Uint8List? imageBytes;
+  final String name;
+
+  const _ContractorAvatar({required this.imageBytes, required this.name});
+
+  @override
+  Widget build(BuildContext context) {
+    final initials =
+        name
+            .trim()
+            .split(RegExp(r'\s+'))
+            .where((part) => part.isNotEmpty)
+            .take(2)
+            .map((part) => part[0].toUpperCase())
+            .join();
+
+    return Container(
+      width: 82,
+      height: 82,
+      clipBehavior: Clip.antiAlias,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(color: AppColors.emerald400.withValues(alpha: 0.34)),
+        color: AppColors.emerald500.withValues(alpha: 0.12),
+      ),
+      child:
+          imageBytes == null
+              ? Center(
+                child: Text(
+                  initials.isEmpty ? 'CN' : initials,
+                  style: const TextStyle(
+                    color: AppColors.emerald300,
+                    fontSize: 24,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              )
+              : Image.memory(imageBytes!, fit: BoxFit.cover),
+    );
+  }
+}
+
+class _ProfileSectionHeader extends StatelessWidget {
+  final String title;
+  final String subtitle;
+
+  const _ProfileSectionHeader({required this.title, required this.subtitle});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: Theme.of(context).textTheme.titleMedium?.copyWith(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          subtitle,
+          style: Theme.of(
+            context,
+          ).textTheme.bodySmall?.copyWith(color: AppColors.graphite300),
+        ),
+      ],
     );
   }
 }

@@ -19,6 +19,8 @@ class FleetTrackingItem {
   final String carga;
   final double heading;
   final bool hasActiveTrip;
+  final GeoCoordinate? originPoint;
+  final GeoCoordinate? destinationPoint;
 
   FleetTrackingItem({
     required this.camioneroId,
@@ -39,15 +41,20 @@ class FleetTrackingItem {
     required this.carga,
     required this.heading,
     required this.hasActiveTrip,
+    required this.originPoint,
+    required this.destinationPoint,
   });
 
   factory FleetTrackingItem.fromJson(Map<String, dynamic> json) {
     final camionero = json['camionero'];
-    final camioneroMap = camionero is Map<String, dynamic> ? camionero : <String, dynamic>{};
-    final camioneroId = (camioneroMap['id'] ?? camioneroMap['_id'] ?? '').toString();
+    final camioneroMap =
+        camionero is Map<String, dynamic> ? camionero : <String, dynamic>{};
+    final camioneroId =
+        (camioneroMap['id'] ?? camioneroMap['_id'] ?? '').toString();
 
     final latestLocation = json['latestLocation'];
-    final locationMap = latestLocation is Map<String, dynamic> ? latestLocation : null;
+    final locationMap =
+        latestLocation is Map<String, dynamic> ? latestLocation : null;
     final coordResult = parseLocationPayload(locationMap);
 
     final activeTrip = json['activeTrip'];
@@ -61,7 +68,22 @@ class FleetTrackingItem {
     }
 
     final camion = camioneroMap['camion'];
-    final placa = camion is Map ? (camion['placa'] ?? 'No registrada').toString() : 'No registrada';
+    final placa =
+        camion is Map
+            ? (camion['placa'] ?? 'No registrada').toString()
+            : 'No registrada';
+    final originPoint =
+        tripMap == null
+            ? null
+            : parseCoordinatesFromDynamic(
+              (tripMap['origin'] as Map?)?['coordinates'],
+            ).coordinate;
+    final destinationPoint =
+        tripMap == null
+            ? null
+            : parseCoordinatesFromDynamic(
+              (tripMap['destination'] as Map?)?['coordinates'],
+            ).coordinate;
 
     return FleetTrackingItem(
       camioneroId: camioneroId,
@@ -70,8 +92,12 @@ class FleetTrackingItem {
       placaVehiculo: placa,
       ubicacion: coordResult.coordinate,
       trackingStatus: (json['trackingStatus'] ?? 'no_location').toString(),
-      lastSeenAt: parseServerDate(json['lastSeenAt'] ?? json['lastUpdateAt'] ?? locationMap?['timestamp']),
-      serverReceivedAt: parseServerDate(json['serverReceivedAt'] ?? locationMap?['serverReceivedAt']),
+      lastSeenAt: parseServerDate(
+        json['lastSeenAt'] ?? json['lastUpdateAt'] ?? locationMap?['timestamp'],
+      ),
+      serverReceivedAt: parseServerDate(
+        json['serverReceivedAt'] ?? locationMap?['serverReceivedAt'],
+      ),
       ageMs: (json['ageMs'] as num?)?.toInt(),
       isStale: json['isStale'] == true,
       isOffline: json['isOffline'] == true,
@@ -79,9 +105,16 @@ class FleetTrackingItem {
       hasLocation: json['hasLocation'] == true || coordResult.isValid,
       origenViaje: tripField('origin', 'origen'),
       destinoViaje: tripField('destination', 'destino'),
-      carga: tripMap != null ? (tripMap['tipoCarga'] ?? 'Carga sin clasificar').toString() : 'Sin carga activa',
-      heading: ((locationMap?['heading'] ?? locationMap?['rumbo'] ?? 0) as num).toDouble(),
+      carga:
+          tripMap != null
+              ? (tripMap['tipoCarga'] ?? 'Carga sin clasificar').toString()
+              : 'Sin carga activa',
+      heading:
+          ((locationMap?['heading'] ?? locationMap?['rumbo'] ?? 0) as num)
+              .toDouble(),
       hasActiveTrip: tripMap != null,
+      originPoint: originPoint,
+      destinationPoint: destinationPoint,
     );
   }
 }

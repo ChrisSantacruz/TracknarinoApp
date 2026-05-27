@@ -12,6 +12,7 @@ import '../../widgets/operational/operational_error_state.dart';
 import '../../widgets/operational/operational_skeleton.dart';
 import '../../widgets/operational/operational_status_chip.dart';
 import '../../widgets/operational/operational_svg_icon.dart';
+import '../../widgets/operational/premium_operational_widgets.dart';
 import 'operational_replay_inspector_screen.dart';
 
 class OperationalDiagnosticsScreen extends StatefulWidget {
@@ -60,30 +61,33 @@ class _OperationalDiagnosticsScreenState
 
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: _loadDiagnostics,
-      child: ListView(
-        padding: const EdgeInsets.fromLTRB(
-          AppSpacing.md,
-          AppSpacing.sm,
-          AppSpacing.md,
-          AppSpacing.xxl,
+    return PremiumGradientScaffold(
+      safeArea: false,
+      child: RefreshIndicator(
+        onRefresh: _loadDiagnostics,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.sm,
+            AppSpacing.md,
+            AppSpacing.xxl,
+          ),
+          children: [
+            _buildWindowSelector(),
+            const SizedBox(height: AppSpacing.md),
+            if (_loading)
+              const _DiagnosticsSkeleton()
+            else if (_error != null)
+              PremiumGlassCard(
+                child: OperationalErrorState(
+                  message: _error!,
+                  onRetry: _loadDiagnostics,
+                ),
+              )
+            else if (_diagnostics != null)
+              _DiagnosticsBody(diagnostics: _diagnostics!),
+          ],
         ),
-        children: [
-          _buildWindowSelector(),
-          const SizedBox(height: AppSpacing.md),
-          if (_loading)
-            const _DiagnosticsSkeleton()
-          else if (_error != null)
-            OperationalCard(
-              child: OperationalErrorState(
-                message: _error!,
-                onRetry: _loadDiagnostics,
-              ),
-            )
-          else if (_diagnostics != null)
-            _DiagnosticsBody(diagnostics: _diagnostics!),
-        ],
       ),
     );
   }
@@ -94,7 +98,10 @@ class _OperationalDiagnosticsScreenState
         Expanded(
           child: Text(
             'Centro operacional',
-            style: Theme.of(context).textTheme.headlineSmall,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w900,
+            ),
           ),
         ),
         SegmentedButton<int>(
@@ -262,7 +269,8 @@ class _ReleaseReadinessPanelState extends State<_ReleaseReadinessPanel> {
         if (snapshot.hasError) {
           return OperationalCard(
             child: OperationalErrorState(
-              message: 'No se pudo cargar readiness de release: ${snapshot.error}',
+              message:
+                  'No se pudo cargar readiness de release: ${snapshot.error}',
               onRetry: _reload,
             ),
           );
@@ -397,7 +405,8 @@ class _CommandHero extends StatelessWidget {
               ),
               _MetaPill(
                 icon: OperationalSvgIcons.route,
-                text: '${diagnostics.routeAnalytics.activeRoutes} rutas activas',
+                text:
+                    '${diagnostics.routeAnalytics.activeRoutes} rutas activas',
               ),
               _MetaPill(
                 icon: OperationalSvgIcons.radio,
@@ -438,10 +447,11 @@ class _OperationalMapPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hotspots = [
-      ...analytics.invalidationHotspots.take(4),
-      ...analytics.corridorAlertDensity.take(4),
-    ].take(6).toList();
+    final hotspots =
+        [
+          ...analytics.invalidationHotspots.take(4),
+          ...analytics.corridorAlertDensity.take(4),
+        ].take(6).toList();
 
     return OperationalCard(
       padding: const EdgeInsets.all(AppSpacing.lg),
@@ -480,9 +490,7 @@ class _OperationalMapPanel extends StatelessWidget {
                       runSpacing: AppSpacing.sm,
                       children:
                           hotspots
-                              .map(
-                                (hotspot) => _HotspotChip(hotspot: hotspot),
-                              )
+                              .map((hotspot) => _HotspotChip(hotspot: hotspot))
                               .toList(),
                     ),
           ),
@@ -529,8 +537,7 @@ class _HealthGrid extends StatelessWidget {
           icon: OperationalSvgIcons.alertTriangle,
           label: 'Rutas degradadas',
           value:
-              diagnostics.routeAnalytics.counts['degradedRoutes']
-                  ?.toString() ??
+              diagnostics.routeAnalytics.counts['degradedRoutes']?.toString() ??
               '0',
           detail:
               '${diagnostics.routeAnalytics.counts['staleRoutes'] ?? 0} stale en ventana',
@@ -658,13 +665,15 @@ class _RealtimePanel extends StatelessWidget {
           ),
           if (realtime.roomOccupancy.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.sm),
-            ...realtime.roomOccupancy.take(4).map(
-              (room) => _ConnectionRow(
-                label: _shortId(room.room),
-                value: '${room.sockets} socket(s)',
-                color: AppColors.deepGreen,
-              ),
-            ),
+            ...realtime.roomOccupancy
+                .take(4)
+                .map(
+                  (room) => _ConnectionRow(
+                    label: _shortId(room.room),
+                    value: '${room.sockets} socket(s)',
+                    color: AppColors.deepGreen,
+                  ),
+                ),
           ],
         ],
       ),
@@ -788,7 +797,10 @@ class _DeploymentReadiness extends StatelessWidget {
                 compact: true,
               ),
               OperationalStatusChip(
-                label: env.redisSocketAdapter ? 'Redis preparado' : 'Adapter local',
+                label:
+                    env.redisSocketAdapter
+                        ? 'Redis preparado'
+                        : 'Adapter local',
                 color:
                     env.redisSocketAdapter
                         ? AppColors.statusActive
@@ -796,7 +808,8 @@ class _DeploymentReadiness extends StatelessWidget {
                 compact: true,
               ),
               OperationalStatusChip(
-                label: env.providerReady ? 'Provider listo' : 'Provider revisar',
+                label:
+                    env.providerReady ? 'Provider listo' : 'Provider revisar',
                 color:
                     env.providerReady
                         ? AppColors.statusActive

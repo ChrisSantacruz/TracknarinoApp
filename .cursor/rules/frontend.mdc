@@ -1,0 +1,35 @@
+---
+description: Flutter frontend quality, state, UX, and reliability rules
+globs: trackarino_app/lib/**/*.dart
+alwaysApply: false
+---
+
+# Flutter Frontend Rules
+
+The app must feel premium, modern and production-ready.
+
+Mandatory:
+- Responsive layouts
+- Smooth animations
+- Proper spacing system
+- Consistent typography
+- Reusable widgets
+- Error boundaries
+- Offline support
+- State persistence
+- Skeleton loaders
+- Retry buttons
+- Empty states
+- Dark mode support
+- Navigation consistency
+- Prevent screen overflow
+- Avoid widget rebuild issues
+- Proper Provider architecture
+
+Never:
+- Use ugly default Material UI
+- Use inconsistent colors
+- Use unaligned widgets
+- Use random padding values
+- Leave screens incomplete
+- Leave buttons without action

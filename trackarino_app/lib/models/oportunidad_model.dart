@@ -36,6 +36,70 @@ class GeoPointData {
   }
 }
 
+class OpportunityPerson {
+  final String id;
+  final String nombre;
+  final String? correo;
+  final String? telefono;
+  final String? empresa;
+
+  const OpportunityPerson({
+    required this.id,
+    required this.nombre,
+    this.correo,
+    this.telefono,
+    this.empresa,
+  });
+
+  factory OpportunityPerson.fromDynamic(dynamic value) {
+    if (value is String) {
+      return OpportunityPerson(id: value, nombre: 'Sin nombre');
+    }
+    if (value is Map) {
+      return OpportunityPerson(
+        id: (value['_id'] ?? value['id'] ?? '').toString(),
+        nombre:
+            (value['nombre'] ?? value['empresa'] ?? 'Sin nombre').toString(),
+        correo: value['correo']?.toString(),
+        telefono: value['telefono']?.toString(),
+        empresa: value['empresa']?.toString(),
+      );
+    }
+    return const OpportunityPerson(id: '', nombre: 'Sin nombre');
+  }
+}
+
+class OpportunityNegotiation {
+  final String estado;
+  final double? precioOfertado;
+  final double? precioContraoferta;
+  final OpportunityPerson? camionero;
+  final String? mensaje;
+
+  const OpportunityNegotiation({
+    required this.estado,
+    this.precioOfertado,
+    this.precioContraoferta,
+    this.camionero,
+    this.mensaje,
+  });
+
+  factory OpportunityNegotiation.fromJson(dynamic value) {
+    if (value is! Map) {
+      return const OpportunityNegotiation(estado: 'sin_oferta');
+    }
+    final camionero = value['camionero'];
+    return OpportunityNegotiation(
+      estado: (value['estado'] ?? 'sin_oferta').toString(),
+      precioOfertado: (value['precioOfertado'] as num?)?.toDouble(),
+      precioContraoferta: (value['precioContraoferta'] as num?)?.toDouble(),
+      camionero:
+          camionero == null ? null : OpportunityPerson.fromDynamic(camionero),
+      mensaje: value['mensaje']?.toString(),
+    );
+  }
+}
+
 class Oportunidad {
   final String? id;
   final String titulo;
@@ -49,6 +113,7 @@ class Oportunidad {
   final String estado;
   final bool finalizada;
   final String contratista;
+  final OpportunityPerson? contratistaInfo;
   final String? camioneroAsignado;
   final DateTime? createdAt;
   final DateTime? updatedAt;
@@ -59,6 +124,7 @@ class Oportunidad {
   final int? duracionEstimadaHoras;
   final GeoPointData? origin;
   final GeoPointData? destination;
+  final OpportunityNegotiation negociacion;
 
   Oportunidad({
     this.id,
@@ -73,6 +139,7 @@ class Oportunidad {
     required this.estado,
     required this.finalizada,
     required this.contratista,
+    this.contratistaInfo,
     this.camioneroAsignado,
     this.createdAt,
     this.updatedAt,
@@ -83,18 +150,13 @@ class Oportunidad {
     this.duracionEstimadaHoras,
     this.origin,
     this.destination,
+    this.negociacion = const OpportunityNegotiation(estado: 'sin_oferta'),
   });
 
   factory Oportunidad.fromJson(Map<String, dynamic> json) {
-    // Extraer contratista (puede ser String o Map)
-    String contratistaId;
-    if (json['contratista'] is String) {
-      contratistaId = json['contratista'];
-    } else if (json['contratista'] is Map) {
-      contratistaId = json['contratista']['_id'] ?? json['contratista']['id'] ?? 'desconocido';
-    } else {
-      contratistaId = 'desconocido';
-    }
+    final contratistaInfo = OpportunityPerson.fromDynamic(json['contratista']);
+    final contratistaId =
+        contratistaInfo.id.isEmpty ? 'desconocido' : contratistaInfo.id;
 
     // Extraer camioneroAsignado (puede ser String, Map o null)
     String? camioneroId;
@@ -103,7 +165,8 @@ class Oportunidad {
     } else if (json['camioneroAsignado'] is String) {
       camioneroId = json['camioneroAsignado'];
     } else if (json['camioneroAsignado'] is Map) {
-      camioneroId = json['camioneroAsignado']['_id'] ?? json['camioneroAsignado']['id'];
+      camioneroId =
+          json['camioneroAsignado']['_id'] ?? json['camioneroAsignado']['id'];
     }
 
     GeoPointData? parseGeoPoint(dynamic value) {
@@ -130,12 +193,19 @@ class Oportunidad {
       direccionDescargue: destination?.address ?? json['direccionDescargue'],
       fecha: DateTime.parse(json['fecha']),
       precio: (json['precio'] as num).toDouble(),
-      estado: json['estado'] == 'finalizada' ? 'entregada' : (json['estado'] ?? 'disponible'),
-      finalizada: (json['finalizada'] as bool?) ?? (json['estado'] == 'entregada'),
+      estado:
+          json['estado'] == 'finalizada'
+              ? 'entregada'
+              : (json['estado'] ?? 'disponible'),
+      finalizada:
+          (json['finalizada'] as bool?) ?? (json['estado'] == 'entregada'),
       contratista: contratistaId,
+      contratistaInfo: contratistaInfo,
       camioneroAsignado: camioneroId,
-      createdAt: json['createdAt'] != null ? DateTime.parse(json['createdAt']) : null,
-      updatedAt: json['updatedAt'] != null ? DateTime.parse(json['updatedAt']) : null,
+      createdAt:
+          json['createdAt'] != null ? DateTime.parse(json['createdAt']) : null,
+      updatedAt:
+          json['updatedAt'] != null ? DateTime.parse(json['updatedAt']) : null,
       pesoCarga: json['pesoCarga'],
       tipoCarga: json['tipoCarga'],
       requisitosEspeciales: json['requisitosEspeciales'],
@@ -143,6 +213,7 @@ class Oportunidad {
       duracionEstimadaHoras: json['duracionEstimadaHoras'],
       origin: origin,
       destination: destination,
+      negociacion: OpportunityNegotiation.fromJson(json['negociacion']),
     );
   }
 
@@ -164,9 +235,11 @@ class Oportunidad {
       'camioneroAsignado': camioneroAsignado,
       if (pesoCarga != null) 'pesoCarga': pesoCarga,
       if (tipoCarga != null) 'tipoCarga': tipoCarga,
-      if (requisitosEspeciales != null) 'requisitosEspeciales': requisitosEspeciales,
+      if (requisitosEspeciales != null)
+        'requisitosEspeciales': requisitosEspeciales,
       if (distanciaKm != null) 'distanciaKm': distanciaKm,
-      if (duracionEstimadaHoras != null) 'duracionEstimadaHoras': duracionEstimadaHoras,
+      if (duracionEstimadaHoras != null)
+        'duracionEstimadaHoras': duracionEstimadaHoras,
     };
   }
-} 
+}

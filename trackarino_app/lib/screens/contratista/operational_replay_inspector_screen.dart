@@ -10,6 +10,7 @@ import '../../widgets/operational/operational_error_state.dart';
 import '../../widgets/operational/operational_skeleton.dart';
 import '../../widgets/operational/operational_status_chip.dart';
 import '../../widgets/operational/operational_svg_icon.dart';
+import '../../widgets/operational/premium_operational_widgets.dart';
 
 class OperationalReplayInspectorScreen extends StatefulWidget {
   const OperationalReplayInspectorScreen({super.key});
@@ -58,22 +59,39 @@ class _OperationalReplayInspectorScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Replay operacional')),
-      body: RefreshIndicator(
-        onRefresh: _load,
-        child: ListView(
-          padding: const EdgeInsets.all(AppSpacing.md),
-          children: [
-            if (_loading)
-              const OperationalCard(
-                child: OperationalSkeleton(height: 180, width: double.infinity),
-              )
-            else if (_error != null)
-              OperationalCard(
-                child: OperationalErrorState(message: _error!, onRetry: _load),
-              )
-            else if (_diagnostics != null)
-              _ReplayTimeline(diagnostics: _diagnostics!),
-          ],
+      backgroundColor: AppColors.inkBlack,
+      body: PremiumGradientScaffold(
+        safeArea: false,
+        child: RefreshIndicator(
+          onRefresh: _load,
+          child: ListView(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            children: [
+              const PremiumScreenHeader(
+                eyebrow: 'Replay',
+                title: 'Historial operacional',
+                subtitle:
+                    'Eventos de diagnóstico y sincronización de los últimos 7 días.',
+              ),
+              const SizedBox(height: AppSpacing.md),
+              if (_loading)
+                const PremiumGlassCard(
+                  child: OperationalSkeleton(
+                    height: 180,
+                    width: double.infinity,
+                  ),
+                )
+              else if (_error != null)
+                PremiumGlassCard(
+                  child: OperationalErrorState(
+                    message: _error!,
+                    onRetry: _load,
+                  ),
+                )
+              else if (_diagnostics != null)
+                _ReplayTimeline(diagnostics: _diagnostics!),
+            ],
+          ),
         ),
       ),
     );
@@ -123,7 +141,8 @@ class _ReplayTimeline extends StatelessWidget {
             const OperationalEmptyState(
               icon: Icons.timeline,
               title: 'Sin replay disponible',
-              message: 'El inspector se habilita cuando existan eventos reales.',
+              message:
+                  'El inspector se habilita cuando existan eventos reales.',
             )
           else
             ...timeline.map((event) => _ReplayEventRow(event: event)),
@@ -156,7 +175,10 @@ class _ReplayEventRow extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(event.eventType, style: Theme.of(context).textTheme.titleSmall),
+                Text(
+                  event.eventType,
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
                 Text(
                   event.reason ?? event.routeId ?? 'sin ruta asociada',
                   style: Theme.of(context).textTheme.bodySmall,

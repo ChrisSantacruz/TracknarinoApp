@@ -1,0 +1,25 @@
+---
+description: Clean code, maintainability, and modularity standards
+alwaysApply: true
+---
+
+# Clean Code Rules
+
+Code must be simple, modular, and production-maintainable.
+
+Mandatory:
+- Reuse existing utilities, widgets, services, and models before creating new ones
+- Keep business logic out of UI widgets and route handlers
+- Keep functions small and focused
+- Use meaningful names for variables, functions, classes, files, and routes
+- Remove dead code, unused imports, and obsolete files when safely related to the task
+- Prefer explicit errors over silent failures
+- Keep API contracts predictable and documented by implementation
+- Avoid magic numbers and undocumented assumptions
+- Keep changes scoped to the requested behavior
+
+Never:
+- Duplicate logic across screens, services, controllers, or repositories
+- Add placeholder code, fake data, or temporary fixes
+- Hide bugs behind broad catch blocks
+- Introduce abstractions that do not reduce real complexity

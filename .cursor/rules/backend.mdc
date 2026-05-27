@@ -1,0 +1,33 @@
+---
+description: Backend architecture, API, MongoDB, and security rules
+globs: Backend/**/*.js
+alwaysApply: false
+---
+
+# Backend Rules
+
+Stack:
+- Node.js
+- Express
+- MongoDB
+- JWT Authentication
+
+Rules:
+
+- Validate all request bodies
+- Use middleware for auth and permissions
+- Never trust frontend data
+- Use proper HTTP status codes
+- Separate routes/controllers/services
+- Add centralized error handling
+- Avoid callback hell
+- Use async/await only
+- Protect sensitive routes
+- Add logging system
+- Prevent duplicated Mongo queries
+- Optimize indexes
+- Add pagination everywhere needed
+- Validate GPS/location data
+- Handle reconnection events
+- Create robust alert persistence
+- Ensure all endpoints return predictable JSON

@@ -1,0 +1,45 @@
+---
+description: Premium UI/UX standards for the TrackNariño app
+globs: trackarino_app/lib/**/*.dart
+alwaysApply: false
+---
+
+# Premium UI/UX Rules
+
+TrackNariño must look like a modern premium startup app.
+
+Design inspiration:
+- Uber Freight
+- Tesla
+- Notion
+- Linear
+- Stripe
+- Google Maps
+- Cabify Driver
+
+UI Requirements:
+- Minimalist interfaces
+- Elegant cards
+- Professional spacing
+- Soft shadows
+- Rounded corners
+- Modern typography
+- Smooth transitions
+- Clean maps
+- High-end dashboard feel
+
+Color Palette:
+- Dark graphite
+- Deep green
+- White
+- Soft gray
+- Emergency red for alerts
+
+Avoid:
+- Saturated colors
+- Generic Flutter UI
+- Crowded screens
+- Inconsistent components
+- Large blocks of text
+
+Every screen must feel polished and intentional.
