@@ -10,7 +10,9 @@ import '../../models/fleet_tracking_item.dart';
 import '../../models/trucker_place.dart';
 import '../../map/operational_map_intelligence.dart';
 import '../../services/contratista_tracking_service.dart';
+import '../../services/calificacion_service.dart';
 import '../../services/narino_trucker_places_service.dart';
+import '../../services/oportunidad_service.dart';
 import '../../services/polling_controller.dart';
 import '../../services/realtime_service.dart';
 import '../../theme/app_colors.dart';
@@ -171,6 +173,7 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
           'nombre': item.nombre,
           'telefono': item.telefono,
           'placaVehiculo': item.placaVehiculo,
+          'activeTripId': item.activeTripId,
           'ubicacion': point,
           'rumbo': item.heading,
           'estado': estado,
@@ -504,6 +507,163 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
         );
       },
     );
+  }
+
+  Future<void> _finalizarYCalificar(Map<String, dynamic> camionero) async {
+    final tripId = (camionero['activeTripId'] ?? '').toString();
+    final camioneroId = (camionero['id'] ?? '').toString();
+    if (tripId.isEmpty || camioneroId.isEmpty) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('No hay viaje activo válido para finalizar.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+
+    final confirmar = await showDialog<bool>(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: const Text('Finalizar viaje'),
+            content: Text(
+              'Se marcará como entregado el viaje activo de ${camionero['nombre']}. ¿Deseas continuar?',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Finalizar'),
+              ),
+            ],
+          ),
+    );
+
+    if (confirmar != true) return;
+
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+
+    final finalizada = await OportunidadService.finalizarCarga(tripId);
+    if (!finalizada) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('No se pudo finalizar el viaje.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    final ratingPayload = await _solicitarCalificacion(camionero['nombre']);
+    if (ratingPayload == null) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Viaje finalizado. Calificación omitida.'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      await _loadFleet(initial: false);
+      return;
+    }
+
+    try {
+      await CalificacionService.crearCalificacion(
+        usuarioId: camioneroId,
+        tipoServicio: 'carga',
+        calificacion: ratingPayload.$1,
+        comentario: ratingPayload.$2,
+      );
+      if (!mounted) return;
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('Viaje finalizado y calificación guardada.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      messenger.showSnackBar(
+        SnackBar(
+          content: Text('Viaje finalizado, pero falló la calificación: $e'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
+
+    await _loadFleet(initial: false);
+  }
+
+  Future<(int, String?)?> _solicitarCalificacion(dynamic nombreCamionero) async {
+    int estrellas = 5;
+    final comentarioController = TextEditingController();
+
+    final result = await showDialog<(int, String?)>(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (dialogContext) => StatefulBuilder(
+            builder: (context, setDialogState) {
+              return AlertDialog(
+                title: const Text('Calificar viaje'),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text('Califica el servicio de ${nombreCamionero ?? 'camionero'}'),
+                    const SizedBox(height: AppSpacing.md),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(5, (index) {
+                        final value = index + 1;
+                        return IconButton(
+                          onPressed: () => setDialogState(() => estrellas = value),
+                          icon: Icon(
+                            value <= estrellas ? Icons.star : Icons.star_border,
+                            color: Colors.amber,
+                          ),
+                        );
+                      }),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    TextField(
+                      controller: comentarioController,
+                      maxLines: 2,
+                      decoration: const InputDecoration(
+                        labelText: 'Comentario (opcional)',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('Omitir'),
+                  ),
+                  FilledButton(
+                    onPressed:
+                        () => Navigator.of(dialogContext).pop((
+                          estrellas,
+                          comentarioController.text.trim().isEmpty
+                              ? null
+                              : comentarioController.text.trim(),
+                        )),
+                    child: const Text('Guardar calificación'),
+                  ),
+                ],
+              );
+            },
+          ),
+    );
+
+    comentarioController.dispose();
+    return result;
   }
 
   Widget _routeBlock(Map<String, dynamic> camionero) {
@@ -1141,6 +1301,22 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
                     label: const Text('Ver detalle operativo'),
                   ),
                 ),
+                if (camionero['hasActiveTrip'] == true)
+                  Padding(
+                    padding: const EdgeInsets.only(top: AppSpacing.sm),
+                    child: SizedBox(
+                      width: double.infinity,
+                      child: FilledButton.icon(
+                        style: FilledButton.styleFrom(
+                          backgroundColor: AppColors.deepGreen,
+                          foregroundColor: Colors.white,
+                        ),
+                        onPressed: () => _finalizarYCalificar(camionero),
+                        icon: const Icon(Icons.check_circle_outline),
+                        label: const Text('Finalizar y calificar'),
+                      ),
+                    ),
+                  ),
               ],
             ),
           ),

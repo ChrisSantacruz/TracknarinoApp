@@ -239,13 +239,39 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
   }
 
   Future<void> _aceptarCarga(Oportunidad oportunidad) async {
-    final confirmar = await showModalBottomSheet<bool>(
+    final decision = await showModalBottomSheet<_AcceptTripDecision>(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => _AcceptTripSheet(oportunidad: oportunidad),
     );
 
-    if (confirmar != true || oportunidad.id == null) return;
+    if (decision == null || oportunidad.id == null) return;
+
+    if (decision.offerPrice != null) {
+      try {
+        await OportunidadService.enviarOfertaPrecio(
+          oportunidadId: oportunidad.id!,
+          precioOfertado: decision.offerPrice!,
+        );
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Oferta enviada al contratista. Esperando respuesta.'),
+          ),
+        );
+        await _cargarOportunidades();
+      } catch (_) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No se pudo enviar la oferta. Intenta de nuevo.'),
+          ),
+        );
+      }
+      return;
+    }
+
+    if (!decision.accept) return;
     if (!mounted) return;
 
     showDialog(
@@ -427,10 +453,15 @@ class _OpportunityDetailsSheet extends StatelessWidget {
         padding: const EdgeInsets.all(AppSpacing.xl),
         child: SafeArea(
           top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(context).size.height * 0.82,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
               const PremiumSheetHandle(),
               const SizedBox(height: AppSpacing.lg),
               Row(
@@ -498,7 +529,9 @@ class _OpportunityDetailsSheet extends StatelessWidget {
                 icon: Icons.check_rounded,
                 onPressed: oportunidad.estado == 'disponible' ? onAccept : null,
               ),
-            ],
+                ],
+              ),
+            ),
           ),
         ),
       ),
@@ -506,10 +539,42 @@ class _OpportunityDetailsSheet extends StatelessWidget {
   }
 }
 
-class _AcceptTripSheet extends StatelessWidget {
+class _AcceptTripSheet extends StatefulWidget {
   final Oportunidad oportunidad;
 
   const _AcceptTripSheet({required this.oportunidad});
+
+  @override
+  State<_AcceptTripSheet> createState() => _AcceptTripSheetState();
+}
+
+class _AcceptTripSheetState extends State<_AcceptTripSheet> {
+  late final TextEditingController _priceController;
+
+  @override
+  void initState() {
+    super.initState();
+    _priceController = TextEditingController(
+      text: widget.oportunidad.precio.toStringAsFixed(0),
+    );
+  }
+
+  @override
+  void dispose() {
+    _priceController.dispose();
+    super.dispose();
+  }
+
+  void _submitOffer() {
+    final price = double.tryParse(_priceController.text.trim().replaceAll(',', ''));
+    if (price == null || price <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Ingresa una oferta válida en COP.')),
+      );
+      return;
+    }
+    Navigator.of(context).pop(_AcceptTripDecision.offer(price));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -533,29 +598,65 @@ class _AcceptTripSheet extends StatelessWidget {
             ),
             const SizedBox(height: AppSpacing.xs),
             Text(
-              '${oportunidad.origen} hacia ${oportunidad.destino}',
+              '${widget.oportunidad.origen} hacia ${widget.oportunidad.destino}',
               style: Theme.of(
                 context,
               ).textTheme.bodyMedium?.copyWith(color: AppColors.graphite300),
             ),
             const SizedBox(height: AppSpacing.md),
             _MetricChip(
-              label: _money(oportunidad.precio),
+              label: _money(widget.oportunidad.precio),
               icon: Icons.payments_outlined,
+            ),
+            const SizedBox(height: AppSpacing.md),
+            TextField(
+              controller: _priceController,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(
+                color: AppColors.graphite900,
+                fontWeight: FontWeight.w800,
+              ),
+              decoration: InputDecoration(
+                filled: true,
+                fillColor: Colors.white.withValues(alpha: 0.94),
+                labelText: 'Tu propuesta COP',
+                labelStyle: const TextStyle(
+                  color: AppColors.graphite800,
+                  fontWeight: FontWeight.w700,
+                ),
+                prefixIcon: const Icon(
+                  Icons.local_offer_outlined,
+                  color: AppColors.graphite700,
+                ),
+              ),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'Puedes aceptar el valor actual o proponer uno nuevo (estilo inDrive).',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: AppColors.graphite300,
+              ),
             ),
             const SizedBox(height: AppSpacing.lg),
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(false),
+                    onPressed: () => Navigator.of(context).pop(_AcceptTripDecision.cancel()),
                     child: const Text('Cancelar'),
                   ),
                 ),
                 const SizedBox(width: AppSpacing.sm),
                 Expanded(
+                  child: OutlinedButton(
+                    onPressed: _submitOffer,
+                    child: const Text('Proponer precio'),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
                   child: FilledButton(
-                    onPressed: () => Navigator.of(context).pop(true),
+                    onPressed: () => Navigator.of(context).pop(_AcceptTripDecision.accept()),
                     child: const Text('Aceptar'),
                   ),
                 ),
@@ -566,6 +667,18 @@ class _AcceptTripSheet extends StatelessWidget {
       ),
     );
   }
+}
+
+class _AcceptTripDecision {
+  final bool accept;
+  final double? offerPrice;
+
+  const _AcceptTripDecision._({required this.accept, this.offerPrice});
+
+  factory _AcceptTripDecision.accept() => const _AcceptTripDecision._(accept: true);
+  factory _AcceptTripDecision.cancel() => const _AcceptTripDecision._(accept: false);
+  factory _AcceptTripDecision.offer(double price) =>
+      _AcceptTripDecision._(accept: false, offerPrice: price);
 }
 
 class _PublisherCard extends StatelessWidget {
@@ -732,9 +845,27 @@ class _NegotiationPanelState extends State<_NegotiationPanel> {
             controller: _priceController,
             keyboardType: TextInputType.number,
             enabled: !_loading && !hasCounterOffer,
-            decoration: const InputDecoration(
+            style: const TextStyle(
+              color: AppColors.graphite900,
+              fontWeight: FontWeight.w800,
+            ),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: Colors.white.withValues(alpha: 0.94),
               labelText: 'Tu oferta COP',
-              prefixIcon: Icon(Icons.payments_outlined),
+              labelStyle: const TextStyle(
+                color: AppColors.graphite800,
+                fontWeight: FontWeight.w700,
+              ),
+              hintText: 'Ej: 2200000',
+              hintStyle: const TextStyle(
+                color: AppColors.graphite700,
+                fontWeight: FontWeight.w600,
+              ),
+              prefixIcon: const Icon(
+                Icons.payments_outlined,
+                color: AppColors.graphite700,
+              ),
             ),
           ),
           const SizedBox(height: AppSpacing.md),

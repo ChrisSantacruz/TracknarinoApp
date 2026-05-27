@@ -41,6 +41,8 @@ const vehiculoSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   }
+}, {
+  collection: 'vehiculos'
 });
 
 module.exports = mongoose.model('Vehiculo', vehiculoSchema);

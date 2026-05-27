@@ -235,6 +235,9 @@ class PremiumTextField extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final textColor = AppColors.graphite900;
+    final iconColor = AppColors.graphite700;
+
     return TextFormField(
       controller: controller,
       obscureText: obscureText,
@@ -244,11 +247,22 @@ class PremiumTextField extends StatelessWidget {
       validator: validator,
       onTap: onTap,
       readOnly: readOnly,
-      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+      cursorColor: textColor,
+      style: const TextStyle(color: AppColors.graphite900, fontWeight: FontWeight.w800),
       decoration: InputDecoration(
+        filled: true,
+        fillColor: Colors.white.withValues(alpha: 0.92),
         labelText: label,
         hintText: hint,
-        prefixIcon: Icon(icon, color: AppColors.graphite300),
+        labelStyle: const TextStyle(
+          color: AppColors.graphite800,
+          fontWeight: FontWeight.w700,
+        ),
+        hintStyle: const TextStyle(
+          color: AppColors.graphite700,
+          fontWeight: FontWeight.w600,
+        ),
+        prefixIcon: Icon(icon, color: iconColor),
         suffixIcon: suffixIcon,
       ),
     );

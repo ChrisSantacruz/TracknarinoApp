@@ -8,6 +8,7 @@ const {
   enviarOfertaPrecio,
   cancelarOfertaPrecio,
   enviarContraofertaPrecio,
+  aceptarOfertaCamionero,
   aceptarContraofertaPrecio,
 } = require('../controllers/oportunidadController');
 const verificarToken = require('../middleware/authMiddleware');
@@ -31,6 +32,10 @@ router.put('/:id/aceptar', verificarToken, soloRol('camionero'), require('../con
 // Negociación de precio
 router.post('/:id/oferta', verificarToken, soloRol('camionero'), enviarOfertaPrecio);
 router.delete('/:id/oferta', verificarToken, soloRol(['camionero', 'contratista']), cancelarOfertaPrecio);
+router.put('/:id/oferta/aceptar', verificarToken, soloRol('contratista'), aceptarOfertaCamionero);
+router.post('/:id/oferta/aceptar', verificarToken, soloRol('contratista'), aceptarOfertaCamionero);
+router.put('/oferta/aceptar/:id', verificarToken, soloRol('contratista'), aceptarOfertaCamionero);
+router.post('/oferta/aceptar/:id', verificarToken, soloRol('contratista'), aceptarOfertaCamionero);
 router.post('/:id/contraoferta', verificarToken, soloRol('contratista'), enviarContraofertaPrecio);
 router.put('/:id/contraoferta/aceptar', verificarToken, soloRol('camionero'), aceptarContraofertaPrecio);
 

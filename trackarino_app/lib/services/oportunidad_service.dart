@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart';
 
+import '../api_service.dart';
 import '../config/api_config.dart';
 import '../models/oportunidad_model.dart';
-import '../api_service.dart';
 import '../offline/sync_engine.dart';
 import 'auth_service.dart';
 
@@ -25,6 +25,18 @@ class OportunidadService {
           .toList();
     } catch (e) {
       debugPrint('Error al obtener oportunidades: $e');
+      rethrow;
+    }
+  }
+
+  static Future<List<Oportunidad>> obtenerOportunidadesContratista() async {
+    try {
+      final response = await ApiService.get(ApiConfig.oportunidades);
+      return (response as List)
+          .map((data) => Oportunidad.fromJson(data))
+          .toList();
+    } catch (e) {
+      debugPrint('Error al obtener oportunidades del contratista: $e');
       rethrow;
     }
   }
@@ -101,7 +113,7 @@ class OportunidadService {
       return Oportunidad.fromJson(response['oportunidad']);
     } catch (e) {
       debugPrint('Error detallado al crear oportunidad completa: $e');
-      return null;
+      rethrow;
     }
   }
 
@@ -183,6 +195,38 @@ class OportunidadService {
       '${ApiConfig.oportunidades}/$oportunidadId/oferta',
     );
     return Oportunidad.fromJson(response['oportunidad']);
+  }
+
+  static Future<Oportunidad> enviarContraofertaPrecio({
+    required String oportunidadId,
+    required double precioContraoferta,
+    String? mensaje,
+  }) async {
+    final response = await ApiService.post(
+      '${ApiConfig.oportunidades}/$oportunidadId/contraoferta',
+      {
+        'precioContraoferta': precioContraoferta,
+        if (mensaje != null && mensaje.trim().isNotEmpty)
+          'mensaje': mensaje.trim(),
+      },
+    );
+    return Oportunidad.fromJson(response['oportunidad']);
+  }
+
+  static Future<Oportunidad> aceptarOfertaCamionero(String oportunidadId) async {
+    try {
+      final response = await ApiService.put(
+        '${ApiConfig.oportunidades}/$oportunidadId/oferta/aceptar',
+        {},
+      );
+      return Oportunidad.fromJson(response['oportunidad']);
+    } catch (_) {
+      final response = await ApiService.post(
+        '${ApiConfig.oportunidades}/oferta/aceptar/$oportunidadId',
+        {},
+      );
+      return Oportunidad.fromJson(response['oportunidad']);
+    }
   }
 
   static Future<Oportunidad> aceptarContraoferta(String oportunidadId) async {

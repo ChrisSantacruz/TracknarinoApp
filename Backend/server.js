@@ -159,6 +159,14 @@ app.get('/', (req, res) => {
   res.send('Bienvenido al backend de Tracknariño');
 });
 
+app.get('/api', (req, res) => {
+  res.json({
+    success: true,
+    service: 'tracknarino-backend',
+    message: 'API operativa',
+  });
+});
+
 app.use('/api', notFound);
 app.use(errorHandler);
 

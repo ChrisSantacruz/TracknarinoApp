@@ -227,10 +227,14 @@ class _AlertasScreenState extends State<AlertasScreen>
       });
 
       if (mounted) {
+        _tabController.animateTo(0);
+        setState(() {
+          _verMapa = false;
+        });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Alerta guardada. Se sincronizará con el servidor.'),
-            backgroundColor: Colors.orange,
+            content: Text('Alerta creada y visible en la pestaña Alertas.'),
+            backgroundColor: Colors.green,
           ),
         );
         _cargarAlertas(); // Recargar alertas
@@ -342,8 +346,32 @@ class _AlertasScreenState extends State<AlertasScreen>
     }
 
     if (_alertas.isEmpty) {
-      return const Center(
-        child: Text('No hay alertas cercanas en este momento'),
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.notifications_off_outlined,
+              size: 34,
+              color: AppColors.graphite300,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              'No hay alertas cercanas en este momento',
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'Puedes crear una alerta en la pestaña Reportar.',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: AppColors.graphite300,
+              ),
+            ),
+          ],
+        ),
       );
     }
 
@@ -840,7 +868,10 @@ class _AlertasScreenState extends State<AlertasScreen>
 
           Text(
             'Tipo de alerta:',
-            style: Theme.of(context).textTheme.titleMedium,
+            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+              color: Colors.white,
+              fontWeight: FontWeight.w800,
+            ),
           ),
 
           const SizedBox(height: 8),
@@ -853,6 +884,13 @@ class _AlertasScreenState extends State<AlertasScreen>
                   return ChoiceChip(
                     label: Text(entry.value['titulo'] as String),
                     selected: _selectedTipoAlerta == entry.key,
+                    labelStyle: TextStyle(
+                      color:
+                          _selectedTipoAlerta == entry.key
+                              ? Colors.white
+                              : AppColors.graphite900,
+                      fontWeight: FontWeight.w700,
+                    ),
                     onSelected: (selected) {
                       if (selected) {
                         setState(() {
@@ -860,9 +898,19 @@ class _AlertasScreenState extends State<AlertasScreen>
                         });
                       }
                     },
-                    avatar: Icon(entry.value['icono'] as IconData),
+                    avatar: Icon(
+                      entry.value['icono'] as IconData,
+                      color:
+                          _selectedTipoAlerta == entry.key
+                              ? Colors.white
+                              : AppColors.graphite900,
+                    ),
                     selectedColor: (entry.value['color'] as Color).withAlpha(
                       50,
+                    ),
+                    backgroundColor: Colors.white.withValues(alpha: 0.06),
+                    side: BorderSide(
+                      color: Colors.white.withValues(alpha: 0.1),
                     ),
                   );
                 }).toList(),
@@ -872,9 +920,22 @@ class _AlertasScreenState extends State<AlertasScreen>
 
           TextField(
             controller: _descripcionController,
-            decoration: const InputDecoration(
+            style: const TextStyle(
+              color: AppColors.graphite900,
+              fontWeight: FontWeight.w700,
+            ),
+            decoration: InputDecoration(
+              filled: true,
+              fillColor: Colors.white.withValues(alpha: 0.94),
               labelText: 'Descripción operativa',
-              prefixIcon: Icon(Icons.notes_outlined),
+              labelStyle: const TextStyle(
+                color: AppColors.graphite800,
+                fontWeight: FontWeight.w700,
+              ),
+              prefixIcon: const Icon(
+                Icons.notes_outlined,
+                color: AppColors.graphite700,
+              ),
             ),
             maxLines: 3,
           ),
@@ -882,11 +943,17 @@ class _AlertasScreenState extends State<AlertasScreen>
           const SizedBox(height: 16),
 
           SwitchListTile.adaptive(
-            title: const Text('Compartir con otros camioneros'),
+            title: const Text(
+              'Compartir con otros camioneros',
+              style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700),
+            ),
             value: _compartirConOtros,
             activeThumbColor: AppColors.emerald400,
             onChanged: (value) => setState(() => _compartirConOtros = value),
-            subtitle: const Text('Permite que otros vean esta alerta'),
+            subtitle: const Text(
+              'Permite que otros vean esta alerta',
+              style: TextStyle(color: AppColors.graphite300),
+            ),
           ),
 
           const SizedBox(height: 24),

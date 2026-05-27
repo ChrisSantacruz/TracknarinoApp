@@ -895,10 +895,24 @@ class _MunicipalitySelector extends StatelessWidget {
     return DropdownButtonFormField<NarinoMunicipality>(
       initialValue: selected,
       isExpanded: true,
-      dropdownColor: AppColors.graphite900,
+      dropdownColor: Colors.white,
+      menuMaxHeight: 320,
+      style: const TextStyle(
+        color: AppColors.graphite900,
+        fontWeight: FontWeight.w700,
+      ),
       decoration: InputDecoration(
+        filled: true,
+        fillColor: Colors.white.withValues(alpha: 0.94),
         labelText: label,
-        prefixIcon: const Icon(Icons.location_city_outlined),
+        labelStyle: const TextStyle(
+          color: AppColors.graphite800,
+          fontWeight: FontWeight.w700,
+        ),
+        prefixIcon: const Icon(
+          Icons.location_city_outlined,
+          color: AppColors.graphite700,
+        ),
       ),
       items:
           narinoMunicipalities
@@ -907,6 +921,10 @@ class _MunicipalitySelector extends StatelessWidget {
                   value: municipality,
                   child: Text(
                     municipality.name,
+                    style: const TextStyle(
+                      color: AppColors.graphite900,
+                      fontWeight: FontWeight.w700,
+                    ),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ),

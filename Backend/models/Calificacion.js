@@ -25,6 +25,8 @@ const calificacionSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   }
+}, {
+  collection: 'calificaciones'
 });
 
 module.exports = mongoose.model('Calificacion', calificacionSchema);

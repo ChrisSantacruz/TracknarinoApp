@@ -47,6 +47,12 @@ const userSchema = new mongoose.Schema({
     enum: ['Visa', 'Nequi', 'Efectivo'],
     required: false
   },
+  calificacion: {
+    type: Number,
+    min: 0,
+    max: 5,
+    default: null,
+  },
   deviceToken: {
     type: String,
     default: ''

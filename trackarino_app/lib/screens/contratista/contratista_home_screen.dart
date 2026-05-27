@@ -5,8 +5,10 @@ import 'package:image_picker/image_picker.dart';
 import 'package:provider/provider.dart';
 
 import '../../models/fleet_tracking_item.dart';
+import '../../models/oportunidad_model.dart';
 import '../../models/user_model.dart';
 import '../../services/auth_service.dart';
+import '../../services/oportunidad_service.dart';
 import '../../services/location_service.dart';
 import '../../state/session_bootstrap.dart';
 import '../../services/contratista_tracking_service.dart';
@@ -32,16 +34,24 @@ class ContratistaHomeScreen extends StatefulWidget {
 
 class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
   int _selectedIndex = 0;
+  String _tripFilter = 'todas';
   bool _fleetLoading = true;
+  bool _tripsLoading = true;
   String? _fleetError;
+  String? _tripsError;
   List<FleetTrackingItem> _fleet = [];
+  List<Oportunidad> _createdTrips = [];
   final ImagePicker _imagePicker = ImagePicker();
   Uint8List? _contractorAvatarBytes;
 
   @override
   void initState() {
     super.initState();
-    _loadFleetSummary();
+    _refreshDashboard();
+  }
+
+  Future<void> _refreshDashboard() async {
+    await Future.wait([_loadFleetSummary(), _loadCreatedTrips()]);
   }
 
   Future<void> _loadFleetSummary() async {
@@ -63,6 +73,197 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
         _fleetLoading = false;
       });
     }
+  }
+
+  Future<void> _loadCreatedTrips() async {
+    setState(() {
+      _tripsLoading = true;
+      _tripsError = null;
+    });
+    try {
+      final trips = await OportunidadService.obtenerOportunidadesContratista();
+      if (!mounted) return;
+      setState(() {
+        _createdTrips = trips;
+        _tripsLoading = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _tripsError = 'No se pudieron cargar tus viajes: $e';
+        _tripsLoading = false;
+      });
+    }
+  }
+
+  Future<void> _acceptOffer(Oportunidad trip) async {
+    if (trip.id == null) return;
+    try {
+      final updated = await OportunidadService.aceptarOfertaCamionero(trip.id!);
+      if (!mounted) return;
+      _replaceTrip(updated);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Oferta aceptada. El viaje quedó con ese transportista.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      _loadFleetSummary();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo aceptar la oferta: $e')),
+      );
+    }
+  }
+
+  Future<void> _sendCounterOffer(Oportunidad trip) async {
+    if (trip.id == null) return;
+
+    final controller = TextEditingController(
+      text: ((trip.negociacion.precioOfertado ?? trip.precio) * 1.02)
+          .toStringAsFixed(0),
+    );
+
+    final result = await showDialog<double>(
+      context: context,
+      builder:
+          (dialogContext) => AlertDialog(
+            title: const Text('Enviar contraoferta'),
+            content: TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              decoration: const InputDecoration(
+                labelText: 'Nuevo valor COP',
+                border: OutlineInputBorder(),
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  final value = double.tryParse(
+                    controller.text.trim().replaceAll(',', ''),
+                  );
+                  Navigator.of(dialogContext).pop(value);
+                },
+                child: const Text('Enviar'),
+              ),
+            ],
+          ),
+    );
+
+    controller.dispose();
+    if (result == null || result <= 0) return;
+
+    try {
+      final updated = await OportunidadService.enviarContraofertaPrecio(
+        oportunidadId: trip.id!,
+        precioContraoferta: result,
+      );
+      if (!mounted) return;
+      _replaceTrip(updated);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Contraoferta enviada al transportista.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo enviar la contraoferta: $e')),
+      );
+    }
+  }
+
+  Future<void> _cancelNegotiation(Oportunidad trip) async {
+    if (trip.id == null) return;
+    try {
+      final updated = await OportunidadService.cancelarOfertaPrecio(trip.id!);
+      if (!mounted) return;
+      _replaceTrip(updated);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Negociación cancelada.')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo cancelar la negociación: $e')),
+      );
+    }
+  }
+
+  void _replaceTrip(Oportunidad updated) {
+    setState(() {
+      final index = _createdTrips.indexWhere((item) => item.id == updated.id);
+      if (index == -1) return;
+      _createdTrips[index] = updated;
+    });
+  }
+
+  bool _isNegotiationTrip(Oportunidad trip) {
+    return trip.negociacion.estado == 'oferta_camionero' ||
+        trip.negociacion.estado == 'contraoferta_contratista';
+  }
+
+  List<Oportunidad> get _filteredTrips {
+    final filtered = _createdTrips.where((trip) {
+      switch (_tripFilter) {
+        case 'disponible':
+          return trip.estado == 'disponible';
+        case 'negociacion':
+          return _isNegotiationTrip(trip);
+        case 'asignada':
+          return trip.estado == 'asignada' || trip.estado == 'aceptada';
+        case 'en_ruta':
+          return trip.estado == 'en_ruta';
+        case 'entregada':
+          return trip.estado == 'entregada';
+        default:
+          return true;
+      }
+    }).toList();
+
+    filtered.sort((a, b) {
+      final priorityComparison = _priorityForTrip(a).compareTo(_priorityForTrip(b));
+      if (priorityComparison != 0) return priorityComparison;
+
+      final aDate = a.updatedAt ?? a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bDate = b.updatedAt ?? b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      return bDate.compareTo(aDate);
+    });
+
+    return filtered;
+  }
+
+  int _priorityForTrip(Oportunidad trip) {
+    if (_isNegotiationTrip(trip)) return 0;
+    if (trip.estado == 'en_ruta') return 1;
+    if (trip.estado == 'asignada' || trip.estado == 'aceptada') return 2;
+    if (trip.estado == 'disponible') return 3;
+    if (trip.estado == 'entregada') return 4;
+    return 5;
+  }
+
+  int _countForFilter(String filter) {
+    if (filter == 'todas') return _createdTrips.length;
+    return _createdTrips.where((trip) {
+      switch (filter) {
+        case 'disponible':
+          return trip.estado == 'disponible';
+        case 'negociacion':
+          return _isNegotiationTrip(trip);
+        case 'asignada':
+          return trip.estado == 'asignada' || trip.estado == 'aceptada';
+        case 'en_ruta':
+          return trip.estado == 'en_ruta';
+        case 'entregada':
+          return trip.estado == 'entregada';
+        default:
+          return false;
+      }
+    }).length;
   }
 
   int get _activeCount =>
@@ -127,10 +328,13 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
         actions: [
           if (_selectedIndex == 0)
             IconButton(
-              onPressed: _loadFleetSummary,
+              onPressed: _refreshDashboard,
               icon: OperationalSvgIcon(
                 OperationalSvgIcons.refreshCw,
-                color: Theme.of(context).colorScheme.onSurface,
+                color: AppColors.emerald300,
+              ),
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.white.withValues(alpha: 0.08),
               ),
               tooltip: 'Actualizar operaciones',
             ),
@@ -138,7 +342,10 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
             onPressed: _logout,
             icon: OperationalSvgIcon(
               OperationalSvgIcons.logOut,
-              color: Theme.of(context).colorScheme.onSurface,
+              color: Colors.white,
+            ),
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.white.withValues(alpha: 0.08),
             ),
             tooltip: 'Cerrar sesión',
           ),
@@ -155,7 +362,7 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
               embedded: true,
               onPublished: () {
                 setState(() => _selectedIndex = 0);
-                _loadFleetSummary();
+                _refreshDashboard();
               },
             ),
             const SeguimientoScreen(),
@@ -262,7 +469,7 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
 
   Widget _buildHomePage() {
     return RefreshIndicator(
-      onRefresh: _loadFleetSummary,
+      onRefresh: _refreshDashboard,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.all(AppSpacing.md),
@@ -329,8 +536,129 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
                 ],
               ),
             ),
+            const SizedBox(height: AppSpacing.lg),
+            _buildCreatedTripsSection(),
           ],
         ),
+      ),
+    );
+  }
+
+  Widget _buildCreatedTripsSection() {
+    if (_tripsLoading) {
+      return const PremiumGlassCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Tus viajes creados'),
+            SizedBox(height: AppSpacing.md),
+            OperationalSkeleton(height: 14, width: double.infinity),
+            SizedBox(height: AppSpacing.sm),
+            OperationalSkeleton(height: 14, width: 240),
+          ],
+        ),
+      );
+    }
+
+    if (_tripsError != null) {
+      return PremiumGlassCard(
+        child: OperationalErrorState(
+          message: _tripsError!,
+          onRetry: _loadCreatedTrips,
+        ),
+      );
+    }
+
+    if (_createdTrips.isEmpty) {
+      return PremiumGlassCard(
+        child: OperationalEmptyState(
+          icon: Icons.work_outline,
+          title: 'Aún no has creado viajes',
+          message: 'Publica tu primera carga y aquí verás todo el historial.',
+          actionLabel: 'Crear viaje',
+          onAction: () => setState(() => _selectedIndex = 1),
+        ),
+      );
+    }
+
+    final filtered = _filteredTrips;
+
+    return PremiumGlassCard(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const _ProfileSectionHeader(
+            title: 'Tus viajes creados',
+            subtitle: 'Gestiona ofertas, contraofertas y estados en tiempo real.',
+          ),
+          const SizedBox(height: AppSpacing.md),
+          SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(
+              children: [
+                _TripFilterChip(
+                  label: 'Todas',
+                  count: _countForFilter('todas'),
+                  value: 'todas',
+                  selectedValue: _tripFilter,
+                  onSelected: (value) => setState(() => _tripFilter = value),
+                ),
+                _TripFilterChip(
+                  label: 'Disponibles',
+                  count: _countForFilter('disponible'),
+                  value: 'disponible',
+                  selectedValue: _tripFilter,
+                  onSelected: (value) => setState(() => _tripFilter = value),
+                ),
+                _TripFilterChip(
+                  label: 'En negociación',
+                  count: _countForFilter('negociacion'),
+                  value: 'negociacion',
+                  selectedValue: _tripFilter,
+                  onSelected: (value) => setState(() => _tripFilter = value),
+                ),
+                _TripFilterChip(
+                  label: 'Asignadas',
+                  count: _countForFilter('asignada'),
+                  value: 'asignada',
+                  selectedValue: _tripFilter,
+                  onSelected: (value) => setState(() => _tripFilter = value),
+                ),
+                _TripFilterChip(
+                  label: 'En ruta',
+                  count: _countForFilter('en_ruta'),
+                  value: 'en_ruta',
+                  selectedValue: _tripFilter,
+                  onSelected: (value) => setState(() => _tripFilter = value),
+                ),
+                _TripFilterChip(
+                  label: 'Entregadas',
+                  count: _countForFilter('entregada'),
+                  value: 'entregada',
+                  selectedValue: _tripFilter,
+                  onSelected: (value) => setState(() => _tripFilter = value),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          if (filtered.isEmpty)
+            const OperationalEmptyState(
+              icon: Icons.filter_alt_off_outlined,
+              title: 'Sin viajes en este filtro',
+              message: 'Cambia el filtro para ver otros estados.',
+            )
+          else
+            ...filtered.map(
+              (trip) => _ContractorTripTile(
+                trip: trip,
+                onAcceptOffer: () => _acceptOffer(trip),
+                onCounterOffer: () => _sendCounterOffer(trip),
+                onCancelNegotiation: () => _cancelNegotiation(trip),
+                onOpenFleet: () => setState(() => _selectedIndex = 2),
+              ),
+            ),
+        ],
       ),
     );
   }
@@ -538,13 +866,197 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 100,
-            child: Text(label, style: Theme.of(context).textTheme.bodySmall),
+            width: 110,
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: AppColors.graphite300,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
           Expanded(
-            child: Text(value, style: Theme.of(context).textTheme.bodyMedium),
+            child: Text(
+              value,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _ContractorTripTile extends StatelessWidget {
+  final Oportunidad trip;
+  final VoidCallback onAcceptOffer;
+  final VoidCallback onCounterOffer;
+  final VoidCallback onCancelNegotiation;
+  final VoidCallback onOpenFleet;
+
+  const _ContractorTripTile({
+    required this.trip,
+    required this.onAcceptOffer,
+    required this.onCounterOffer,
+    required this.onCancelNegotiation,
+    required this.onOpenFleet,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final negotiation = trip.negociacion;
+    final hasTruckerOffer = negotiation.estado == 'oferta_camionero';
+    final hasCounterOffer = negotiation.estado == 'contraoferta_contratista';
+    final hasAssignedTrucker = (trip.camioneroAsignado ?? '').isNotEmpty;
+    final priority = _priorityMeta();
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppSpacing.md),
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(AppSpacing.cardRadius),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  trip.titulo,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
+              PremiumStatusPill(
+                label: priority.label,
+                color: priority.color,
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              OperationalStatusChip.tracking(trip.estado, compact: true),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            '${trip.origen} → ${trip.destino}',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: AppColors.graphite300),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'Precio actual: \$${trip.precio.toStringAsFixed(0)}',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+          if (hasTruckerOffer) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'Oferta transportista: \$${(negotiation.precioOfertado ?? trip.precio).toStringAsFixed(0)}',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: AppColors.emerald300,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          if (hasCounterOffer) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'Contraoferta enviada: \$${(negotiation.precioContraoferta ?? trip.precio).toStringAsFixed(0)}',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: AppColors.statusSyncing,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+          const SizedBox(height: AppSpacing.sm),
+          Wrap(
+            spacing: AppSpacing.xs,
+            runSpacing: AppSpacing.xs,
+            children: [
+              if (hasTruckerOffer) ...[
+                FilledButton.tonal(
+                  onPressed: onAcceptOffer,
+                  child: const Text('Aceptar oferta'),
+                ),
+                OutlinedButton(
+                  onPressed: onCounterOffer,
+                  child: const Text('Contraofertar'),
+                ),
+              ] else if (hasCounterOffer) ...[
+                OutlinedButton(
+                  onPressed: onCounterOffer,
+                  child: const Text('Enviar otra contraoferta'),
+                ),
+              ],
+              if (hasTruckerOffer || hasCounterOffer)
+                OutlinedButton(
+                  onPressed: onCancelNegotiation,
+                  child: const Text('Cancelar negociación'),
+                ),
+              if (hasAssignedTrucker)
+                FilledButton(
+                  onPressed: onOpenFleet,
+                  child: const Text('Ver en flota'),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  ({String label, Color color}) _priorityMeta() {
+    if (trip.negociacion.estado == 'oferta_camionero') {
+      return (label: 'Prioridad alta', color: AppColors.alertCritical);
+    }
+    if (trip.estado == 'en_ruta') {
+      return (label: 'Prioridad alta', color: AppColors.statusSyncing);
+    }
+    if (trip.negociacion.estado == 'contraoferta_contratista' ||
+        trip.estado == 'asignada' ||
+        trip.estado == 'aceptada') {
+      return (label: 'Prioridad media', color: AppColors.statusStale);
+    }
+    if (trip.estado == 'disponible') {
+      return (label: 'Prioridad baja', color: AppColors.statusActive);
+    }
+    return (label: 'Prioridad baja', color: AppColors.graphite700);
+  }
+}
+
+class _TripFilterChip extends StatelessWidget {
+  final String label;
+  final int count;
+  final String value;
+  final String selectedValue;
+  final ValueChanged<String> onSelected;
+
+  const _TripFilterChip({
+    required this.label,
+    required this.count,
+    required this.value,
+    required this.selectedValue,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = value == selectedValue;
+    return Padding(
+      padding: const EdgeInsets.only(right: AppSpacing.xs),
+      child: ChoiceChip(
+        label: Text('$label: $count'),
+        selected: selected,
+        onSelected: (_) => onSelected(value),
       ),
     );
   }

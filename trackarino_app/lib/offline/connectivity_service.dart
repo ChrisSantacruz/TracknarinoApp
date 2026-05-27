@@ -55,7 +55,7 @@ class ConnectivityService {
     }
 
     try {
-      final probeUri = Uri.parse(ApiConfig.baseUrl);
+      final probeUri = Uri.parse('${ApiConfig.baseUrl}/health');
       await http.get(probeUri).timeout(const Duration(seconds: 5));
       return ConnectivityHealth.internetReachable;
     } catch (error) {

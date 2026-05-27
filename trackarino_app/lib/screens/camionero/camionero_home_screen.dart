@@ -41,6 +41,7 @@ class CamioneroHomeScreen extends StatefulWidget {
 class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
   int _selectedIndex = 0;
   StreamSubscription<Position>? _positionSubscription;
+  Timer? _tripSyncTimer;
   final MapController _mapController = MapController();
   LatLng? _currentPosition;
   LatLng? _destinoPosition;
@@ -78,6 +79,15 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
         await _ensureRouteForTrip(trip);
       }
     });
+    _tripSyncTimer = Timer.periodic(const Duration(seconds: 12), (_) async {
+      if (!mounted) return;
+      final tripStore = context.read<TripStore>();
+      await tripStore.refreshActiveTrip();
+      final trip = tripStore.activeTrip;
+      if (trip != null) {
+        await _ensureRouteForTrip(trip);
+      }
+    });
   }
 
   LocationService get _locationService =>
@@ -85,6 +95,7 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
 
   @override
   void dispose() {
+    _tripSyncTimer?.cancel();
     _positionSubscription?.cancel();
     super.dispose();
   }
@@ -336,7 +347,10 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
             onPressed: () => setState(() => _selectedIndex = 2),
             icon: OperationalSvgIcon(
               OperationalSvgIcons.bell,
-              color: Theme.of(context).colorScheme.onSurface,
+              color: AppColors.emerald300,
+            ),
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.white.withValues(alpha: 0.08),
             ),
             tooltip: 'Alertas',
           ),
@@ -344,7 +358,10 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
             onPressed: _logout,
             icon: OperationalSvgIcon(
               OperationalSvgIcons.logOut,
-              color: Theme.of(context).colorScheme.onSurface,
+              color: Colors.white,
+            ),
+            style: IconButton.styleFrom(
+              backgroundColor: Colors.white.withValues(alpha: 0.08),
             ),
             tooltip: 'Cerrar sesión',
           ),

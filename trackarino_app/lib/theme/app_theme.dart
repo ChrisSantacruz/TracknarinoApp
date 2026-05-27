@@ -80,6 +80,13 @@ abstract final class AppTheme {
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
         style: OutlinedButton.styleFrom(
+          foregroundColor: isDark ? AppColors.emerald300 : AppColors.deepGreen,
+          side: BorderSide(
+            color:
+                isDark
+                    ? AppColors.emerald400.withValues(alpha: 0.72)
+                    : AppColors.deepGreen.withValues(alpha: 0.48),
+          ),
           minimumSize: const Size(0, AppSpacing.minTouchTarget),
           padding: const EdgeInsets.symmetric(
             horizontal: AppSpacing.lg,
@@ -87,6 +94,14 @@ abstract final class AppTheme {
           ),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppSpacing.chipRadius),
+          ),
+        ),
+      ),
+      textButtonTheme: TextButtonThemeData(
+        style: TextButton.styleFrom(
+          foregroundColor: isDark ? AppColors.emerald300 : AppColors.deepGreen,
+          textStyle: const TextStyle(
+            fontWeight: FontWeight.w700,
           ),
         ),
       ),

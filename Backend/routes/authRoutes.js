@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
+const Vehiculo = require('../models/Vehiculo');
 const bcrypt = require('bcrypt');
 const verificarToken = require('../middleware/authMiddleware');
 const asyncHandler = require('../middleware/asyncHandler');
@@ -135,7 +136,25 @@ const handleRegistro = asyncHandler(async (req, res) => {
     disponibleParaSolicitarCamioneros
   });
 
+  if (tipoUsuario === 'camionero' && camionNormalizado) {
+    await Vehiculo.findOneAndUpdate(
+      { camioneroId: nuevoUsuario._id },
+      {
+        camioneroId: nuevoUsuario._id,
+        tipoVehiculo: camionNormalizado.tipoVehiculo,
+        capacidadCarga: Number(camionNormalizado.capacidadCarga),
+        unidadCapacidad: camionNormalizado.unidadCapacidad,
+        marca: camionNormalizado.marca,
+        modelo: camionNormalizado.modelo,
+        placa: camionNormalizado.placa,
+        papelesAlDia: camionNormalizado.papelesAlDia ?? true,
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+  }
+
   return sendAuthResponse(res, 201, 'Usuario registrado correctamente', nuevoUsuario);
+  
 });
 
 // Registro de un nuevo usuario (rutas en español e inglés)
@@ -192,5 +211,23 @@ router.put('/actualizar-pago', verificarToken, asyncHandler(async (req, res) => 
 
   return res.json({ mensaje: 'Método de pago actualizado', usuario: sanitizeUser(usuario) });
 }));
+
+router.use((err, req, res, next) => {
+  if (res.headersSent) return next(err);
+
+  if (err?.name === 'ValidationError') {
+    const mensaje = Object.values(err.errors || {})
+      .map((error) => error.message)
+      .filter(Boolean)
+      .join('. ') || 'Datos inválidos';
+    return sendError(res, 400, mensaje, 'VALIDATION_ERROR');
+  }
+
+  if (err?.code === 11000) {
+    return sendError(res, 409, 'El correo ya está registrado', 'USER_ALREADY_EXISTS');
+  }
+
+  return next(err);
+});
 
 module.exports = router;

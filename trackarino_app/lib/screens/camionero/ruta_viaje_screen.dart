@@ -61,12 +61,14 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
 
   bool _initialized = false;
   bool _isFollowingVehicle = true;
+  bool _navigationMode = false;
 
   @override
   void initState() {
     super.initState();
     if (widget.oportunidad.estado == 'en_ruta') {
       _viajeIniciado = true;
+      _navigationMode = true;
     }
   }
 
@@ -232,7 +234,8 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
                     : _currentHeading;
           });
           if (_isFollowingVehicle) {
-            _mapController.move(nextPosition, _mapController.zoom);
+            final followZoom = _viajeIniciado ? 16.2 : _mapController.zoom;
+            _mapController.move(nextPosition, followZoom);
           }
           _evaluateRoutingState(nextPosition);
         }
@@ -424,7 +427,7 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
           if (!_isLoadingRoute && _routePoints.isNotEmpty)
             Positioned(
               right: AppSpacing.md,
-              bottom: 200,
+              bottom: _navigationMode ? 96 : 200,
               child: MapControlCluster(
                 onZoomIn:
                     () => _mapController.move(
@@ -466,7 +469,12 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
 
           // Panel inferior con información
           if (!_isLoadingRoute && _distanciaKm != null)
-            Positioned(left: 0, right: 0, bottom: 0, child: _buildInfoPanel()),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: _navigationMode ? _buildNavigationHud() : _buildInfoPanel(),
+            ),
 
           // Botones de acción en esquinas superiores
           if (_viajeIniciado) ...[
@@ -487,6 +495,20 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
+                  OperationalMapActionChip(
+                    svg: operationalCrosshairSvg,
+                    label: _navigationMode ? 'Vista completa' : 'Modo navegacion',
+                    color: AppColors.statusSyncing,
+                    onPressed: () {
+                      setState(() {
+                        _navigationMode = !_navigationMode;
+                      });
+                      if (_navigationMode) {
+                        _centerMapOnRoute();
+                      }
+                    },
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
                   OperationalMapActionChip(
                     svg: operationalAlertSvg,
                     label: 'Reportar',
@@ -650,6 +672,12 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
                     ),
                   ],
                 ),
+                const SizedBox(height: AppSpacing.sm),
+                OutlinedButton.icon(
+                  onPressed: _activarSeguimientoRuta,
+                  icon: const Icon(Icons.navigation_outlined),
+                  label: const Text('Seguir ruta'),
+                ),
               ],
             ),
           ),
@@ -716,6 +744,91 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildNavigationHud() {
+    final statusColor = _viajeIniciado
+        ? AppColors.statusActive
+        : AppColors.statusSyncing;
+    return SafeArea(
+      top: false,
+      child: Container(
+        margin: const EdgeInsets.fromLTRB(
+          AppSpacing.md,
+          0,
+          AppSpacing.md,
+          AppSpacing.md,
+        ),
+        padding: const EdgeInsets.all(AppSpacing.md),
+        decoration: BoxDecoration(
+          color: AppColors.graphite950.withValues(alpha: 0.92),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: statusColor.withValues(alpha: 0.45)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.32),
+              blurRadius: 16,
+              offset: const Offset(0, 8),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 10,
+                  height: 10,
+                  decoration: BoxDecoration(
+                    color: statusColor,
+                    shape: BoxShape.circle,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.xs),
+                Expanded(
+                  child: Text(
+                    _viajeIniciado ? 'Navegando hacia ${widget.oportunidad.destino}' : 'Ruta lista para iniciar',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                Text(
+                  _duracionTexto ?? '--',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _centerMapOnRoute,
+                    icon: const Icon(Icons.center_focus_strong),
+                    label: const Text('Centrar'),
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: FilledButton.icon(
+                    onPressed: _activarSeguimientoRuta,
+                    icon: const Icon(Icons.navigation_outlined),
+                    label: const Text('Seguir ruta'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -975,6 +1088,11 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
                 ],
               ),
               backgroundColor: Colors.green,
+              action: SnackBarAction(
+                label: 'Seguir',
+                textColor: Colors.white,
+                onPressed: _activarSeguimientoRuta,
+              ),
               duration: const Duration(seconds: 4),
             ),
           );
@@ -1411,6 +1529,20 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
           );
         }
       }
+    }
+  }
+
+  void _activarSeguimientoRuta() {
+    if (!mounted) return;
+    setState(() {
+      _isFollowingVehicle = true;
+      _navigationMode = true;
+    });
+
+    if (_currentPosition != null) {
+      _mapController.move(_currentPosition!, 16.2);
+    } else {
+      _centerMapOnRoute();
     }
   }
 }

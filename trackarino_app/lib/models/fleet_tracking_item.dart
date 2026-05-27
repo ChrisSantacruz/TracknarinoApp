@@ -19,6 +19,7 @@ class FleetTrackingItem {
   final String carga;
   final double heading;
   final bool hasActiveTrip;
+  final String? activeTripId;
   final GeoCoordinate? originPoint;
   final GeoCoordinate? destinationPoint;
 
@@ -41,6 +42,7 @@ class FleetTrackingItem {
     required this.carga,
     required this.heading,
     required this.hasActiveTrip,
+    required this.activeTripId,
     required this.originPoint,
     required this.destinationPoint,
   });
@@ -113,6 +115,7 @@ class FleetTrackingItem {
           ((locationMap?['heading'] ?? locationMap?['rumbo'] ?? 0) as num)
               .toDouble(),
       hasActiveTrip: tripMap != null,
+      activeTripId: tripMap?['_id']?.toString(),
       originPoint: originPoint,
       destinationPoint: destinationPoint,
     );

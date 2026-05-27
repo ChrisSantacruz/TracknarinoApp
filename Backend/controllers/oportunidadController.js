@@ -148,13 +148,68 @@ const crearOportunidad = async (req, res) => {
 // Listar oportunidades disponibles (pueden verlas todos los autenticados)
 const listarOportunidades = async (req, res) => {
   try {
-    const oportunidades = await Oportunidad.find({ estado: 'disponible' })
-      .sort({ fecha: 1 })
+    const filter =
+      req.usuario?.tipoUsuario === 'contratista'
+        ? { contratista: req.usuario.id }
+        : { estado: 'disponible' };
+
+    const oportunidades = await Oportunidad.find(filter)
+      .sort({ createdAt: -1 })
       .populate('contratista', 'nombre correo telefono empresa')
+      .populate('camioneroAsignado', 'nombre correo telefono camion')
       .populate('negociacion.camionero', 'nombre correo telefono camion');
     res.json(oportunidades);
   } catch (error) {
     res.status(500).json({ error: 'Error al listar oportunidades' });
+  }
+};
+
+const aceptarOfertaCamionero = async (req, res) => {
+  try {
+    const oportunidad = await Oportunidad.findById(req.params.id);
+    if (!oportunidad) {
+      return res.status(404).json({ error: 'Oportunidad no encontrada' });
+    }
+    if (oportunidad.contratista.toString() !== req.usuario.id) {
+      return res.status(403).json({ error: 'Solo el contratista puede aceptar esta oferta' });
+    }
+    if (oportunidad.estado !== 'disponible') {
+      return res.status(400).json({ error: 'Esta carga ya no está disponible para negociación' });
+    }
+    if (oportunidad.negociacion?.estado !== 'oferta_camionero') {
+      return res.status(400).json({ error: 'No hay oferta de camionero pendiente por aceptar' });
+    }
+
+    const camioneroId = oportunidad.negociacion.camionero?.toString();
+    if (!camioneroId) {
+      return res.status(400).json({ error: 'La oferta no tiene camionero asociado' });
+    }
+
+    const viajeActivo = await Oportunidad.findOne({
+      camioneroAsignado: camioneroId,
+      estado: { $in: ACTIVE_TRIP_STATES }
+    });
+    if (viajeActivo) {
+      return res.status(400).json({ error: 'El camionero ya tiene un viaje activo' });
+    }
+
+    oportunidad.precio = oportunidad.negociacion.precioOfertado || oportunidad.precio;
+    oportunidad.camioneroAsignado = camioneroId;
+    oportunidad.negociacion.estado = 'aceptada';
+    oportunidad.negociacion.ultimaAccionPor = req.usuario.id;
+    oportunidad.negociacion.ultimaAccionRol = 'contratista';
+    oportunidad.negociacion.updatedAt = new Date();
+    const previousState = setTripState(oportunidad, 'aceptada');
+
+    await oportunidad.save();
+    await publishTripStateChanged(oportunidad, previousState);
+    await populateOpportunityDetails(oportunidad);
+    return res.json({ mensaje: 'Oferta aceptada. Viaje asignado al camionero.', oportunidad });
+  } catch (error) {
+    console.error('Error al aceptar oferta de camionero:', error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Error al aceptar oferta de camionero',
+    });
   }
 };
 
@@ -500,6 +555,7 @@ module.exports = {
   enviarOfertaPrecio,
   cancelarOfertaPrecio,
   enviarContraofertaPrecio,
+  aceptarOfertaCamionero,
   aceptarContraofertaPrecio,
   obtenerViajeActivo,
   iniciarViaje

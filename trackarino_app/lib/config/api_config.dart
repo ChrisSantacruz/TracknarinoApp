@@ -13,12 +13,12 @@ class ApiConfig {
   static String get _baseUrl {
     if (isDevelopment) {
       if (kIsWeb) {
-        return 'http://localhost:4000/api';
+        return 'http://localhost:4001/api';
       }
       if (defaultTargetPlatform == TargetPlatform.android) {
-        return 'http://10.0.2.2:4000/api';
+        return 'http://10.0.2.2:4001/api';
       }
-      return 'http://localhost:4000/api';
+      return 'http://localhost:4001/api';
     }
 
     if (_productionBaseUrl.isEmpty) {
@@ -37,6 +37,7 @@ class ApiConfig {
   static String get oportunidades => '$_baseUrl/oportunidades';
   static String get ubicacion => '$_baseUrl/ubicacion';
   static String get alertas => '$_baseUrl/alertas';
+  static String get calificaciones => '$_baseUrl/calificaciones';
   static String get contratistas => '$_baseUrl/contratistas';
   static String get operations => '$_baseUrl/operations';
 
