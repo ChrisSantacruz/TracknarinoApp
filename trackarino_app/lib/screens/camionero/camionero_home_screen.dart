@@ -111,15 +111,23 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
     }
 
     try {
-      final position = await _locationService.getCurrentLocation();
-      if (position == null) return;
       final destination = oportunidad.destination;
       if (destination == null) return;
+      final auth = context.read<AuthService>();
+      final origin = oportunidad.origin;
+      final currentPosition =
+          auth.isSimulationSession && origin != null
+              ? LatLng(origin.lat, origin.lng)
+              : null;
+      final position =
+          currentPosition == null ? await _locationService.getCurrentLocation() : null;
+      if (currentPosition == null && position == null) return;
 
-      final currentPosition = LatLng(position.latitude, position.longitude);
+      final startPosition =
+          currentPosition ?? LatLng(position!.latitude, position.longitude);
       final destinationPosition = LatLng(destination.lat, destination.lng);
       final routeData = await ORSService.obtenerRuta(
-        currentPosition,
+        startPosition,
         destinationPosition,
       );
       final points = List<LatLng>.from(routeData['coordinates'] as List);

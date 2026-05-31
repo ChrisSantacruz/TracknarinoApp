@@ -9,9 +9,14 @@ class User {
   final String? numeroCedula;
   final Map<String, dynamic>? camion;
   final String? metodoPago;
+  final String? authProvider;
+  final String? fotoPerfil;
+  final bool rolConfigurado;
   final bool isDisponible;
   final double? calificacion;
   final int? viajesCompletados;
+  final String? sessionType;
+  final bool isSimulation;
 
   User({
     this.id,
@@ -24,9 +29,14 @@ class User {
     this.numeroCedula,
     this.camion,
     this.metodoPago,
+    this.authProvider,
+    this.fotoPerfil,
+    this.rolConfigurado = true,
     this.isDisponible = false,
     this.calificacion,
     this.viajesCompletados,
+    this.sessionType,
+    this.isSimulation = false,
   });
 
   factory User.fromJson(Map<String, dynamic> json) {
@@ -43,9 +53,16 @@ class User {
           ? Map<String, dynamic>.from(json['camion']) 
           : null,
       metodoPago: json['metodoPago'],
+      authProvider: json['authProvider'],
+      fotoPerfil: json['fotoPerfil'],
+      rolConfigurado: json['rolConfigurado'] ?? (json['tipoUsuario'] != 'usuario'),
       isDisponible: json['isDisponible'] ?? false,
       calificacion: json['calificacion']?.toDouble(),
       viajesCompletados: json['viajesCompletados'],
+      sessionType: json['sessionType'],
+      isSimulation:
+          json['isSimulation'] == true ||
+          json['sessionType'] == 'SIMULATION_DRIVER',
     );
   }
 
@@ -61,9 +78,14 @@ class User {
       if (numeroCedula != null) 'numeroCedula': numeroCedula,
       if (camion != null) 'camion': camion,
       if (metodoPago != null) 'metodoPago': metodoPago,
+      if (authProvider != null) 'authProvider': authProvider,
+      if (fotoPerfil != null) 'fotoPerfil': fotoPerfil,
+      'rolConfigurado': rolConfigurado,
       'isDisponible': isDisponible,
       if (calificacion != null) 'calificacion': calificacion,
       if (viajesCompletados != null) 'viajesCompletados': viajesCompletados,
+      if (sessionType != null) 'sessionType': sessionType,
+      'isSimulation': isSimulation,
     };
   }
 
@@ -72,25 +94,36 @@ class User {
     String? telefono,
     String? empresa,
     String? metodoPago,
+    String? tipoUsuario,
+    String? authProvider,
+    String? fotoPerfil,
+    bool? rolConfigurado,
     Map<String, dynamic>? camion,
     bool? isDisponible,
     double? calificacion,
     int? viajesCompletados,
+    String? sessionType,
+    bool? isSimulation,
   }) {
     return User(
       id: id,
       nombre: nombre ?? this.nombre,
       correo: correo,
       telefono: telefono ?? this.telefono,
-      tipoUsuario: tipoUsuario,
+      tipoUsuario: tipoUsuario ?? this.tipoUsuario,
       empresa: empresa ?? this.empresa,
       empresaAfiliada: empresaAfiliada,
       numeroCedula: numeroCedula,
       camion: camion ?? this.camion,
       metodoPago: metodoPago ?? this.metodoPago,
+      authProvider: authProvider ?? this.authProvider,
+      fotoPerfil: fotoPerfil ?? this.fotoPerfil,
+      rolConfigurado: rolConfigurado ?? this.rolConfigurado,
       isDisponible: isDisponible ?? this.isDisponible,
       calificacion: calificacion ?? this.calificacion,
       viajesCompletados: viajesCompletados ?? this.viajesCompletados,
+      sessionType: sessionType ?? this.sessionType,
+      isSimulation: isSimulation ?? this.isSimulation,
     );
   }
 } 

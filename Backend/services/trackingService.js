@@ -151,7 +151,7 @@ async function shouldAcceptLatestUpdate(camioneroId, payload, latest) {
   return new Date(payload.timestamp).getTime() >= new Date(latest.timestamp).getTime();
 }
 
-async function persistLocationUpdate(camioneroId, body) {
+async function persistLocationUpdate(camioneroId, body, options = {}) {
   const validation = validateTrackingPayload(body, camioneroId);
   if (validation.error) {
     const error = new Error(validation.error);
@@ -161,12 +161,14 @@ async function persistLocationUpdate(camioneroId, body) {
 
   const { payload } = validation;
 
-  const activeTrip = await resolveActiveTripForCamionero(camioneroId);
+  const activeTrip = options.simulation
+    ? null
+    : await resolveActiveTripForCamionero(camioneroId);
   if (activeTrip && !payload.oportunidad) {
     payload.oportunidad = activeTrip._id;
   }
 
-  if (payload.oportunidad) {
+  if (payload.oportunidad && !options.simulation) {
     const trip = await Oportunidad.findById(payload.oportunidad).select('camioneroAsignado estado');
     if (!trip || trip.camioneroAsignado?.toString() !== camioneroId) {
       const error = new Error('oportunidadId no corresponde al viaje activo del camionero');

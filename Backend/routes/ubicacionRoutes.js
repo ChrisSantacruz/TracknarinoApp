@@ -88,7 +88,9 @@ router.post('/actualizar', verificarToken, soloRol('camionero'), asyncHandler(as
 
   try {
 
-    const result = await persistLocationUpdate(req.usuario.id, req.body);
+    const result = await persistLocationUpdate(req.usuario.id, req.body, {
+      simulation: req.usuario.isSimulation === true,
+    });
 
 
 

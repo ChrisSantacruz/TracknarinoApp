@@ -14,6 +14,8 @@ function verificarToken(req, res, next) {
     req.usuario = {
       ...decoded,
       tipoUsuario: decoded.tipoUsuario || decoded.tipo,
+      sessionType: decoded.sessionType,
+      isSimulation: decoded.sessionType === 'SIMULATION_DRIVER',
     };
     next();
   } catch (error) {

@@ -1,9 +1,11 @@
+import 'package:flutter/foundation.dart';
+import 'package:geolocator/geolocator.dart';
+
 import '../config/api_config.dart';
 import '../models/alerta_model.dart';
 import '../api_service.dart';
 import '../offline/sync_engine.dart';
 import 'auth_service.dart';
-import 'package:geolocator/geolocator.dart';
 
 class AlertaService {
   // Crear una nueva alerta de seguridad
@@ -51,7 +53,7 @@ class AlertaService {
         timestamp: timestamp,
       );
     } catch (e) {
-      print('Error al crear alerta: $e');
+      debugPrint('Error al crear alerta: $e');
       rethrow;
     }
   }
@@ -77,7 +79,7 @@ class AlertaService {
           .map((data) => AlertaSeguridad.fromJson(data))
           .toList();
     } catch (e) {
-      print('Error al obtener alertas cercanas: $e');
+      debugPrint('Error al obtener alertas cercanas: $e');
       rethrow;
     }
   }
@@ -90,7 +92,7 @@ class AlertaService {
           .map((data) => AlertaSeguridad.fromJson(data))
           .toList();
     } catch (e) {
-      print('Error al obtener alertas recientes: $e');
+      debugPrint('Error al obtener alertas recientes: $e');
       rethrow;
     }
   }
@@ -105,7 +107,7 @@ class AlertaService {
 
       return response['success'] == true;
     } catch (e) {
-      print('Error al confirmar alerta: $e');
+      debugPrint('Error al confirmar alerta: $e');
       return false;
     }
   }
@@ -120,7 +122,7 @@ class AlertaService {
 
       return response['success'] == true;
     } catch (e) {
-      print('Error al compartir alerta: $e');
+      debugPrint('Error al compartir alerta: $e');
       return false;
     }
   }

@@ -5,6 +5,9 @@ const {
   listarOportunidades,
   asignarCamionero,
   finalizarCarga,
+  listarOfertas,
+  aceptarOferta,
+  rechazarOferta,
   enviarOfertaPrecio,
   cancelarOfertaPrecio,
   enviarContraofertaPrecio,
@@ -14,8 +17,8 @@ const {
 const verificarToken = require('../middleware/authMiddleware');
 const soloRol = require('../middleware/rolMiddleware');
 
-// Crear oportunidad (contratistas)
-router.post('/crear', verificarToken, soloRol(['contratista', 'camionero']), crearOportunidad);
+// Crear oportunidad (clientes y contratistas)
+router.post('/crear', verificarToken, soloRol(['contratista', 'cliente']), crearOportunidad);
 
 // Listar todas las oportunidades (ruta principal)
 router.get('/', verificarToken, listarOportunidades);
@@ -31,6 +34,10 @@ router.put('/:id/aceptar', verificarToken, soloRol('camionero'), require('../con
 
 // Negociación de precio
 router.post('/:id/oferta', verificarToken, soloRol('camionero'), enviarOfertaPrecio);
+router.post('/:id/offers', verificarToken, soloRol('camionero'), enviarOfertaPrecio);
+router.get('/:id/offers', verificarToken, soloRol(['cliente', 'contratista', 'camionero']), listarOfertas);
+router.put('/offers/:offerId/accept', verificarToken, soloRol(['cliente', 'contratista']), aceptarOferta);
+router.put('/offers/:offerId/reject', verificarToken, soloRol(['cliente', 'contratista']), rechazarOferta);
 router.delete('/:id/oferta', verificarToken, soloRol(['camionero', 'contratista']), cancelarOfertaPrecio);
 router.put('/:id/oferta/aceptar', verificarToken, soloRol('contratista'), aceptarOfertaCamionero);
 router.post('/:id/oferta/aceptar', verificarToken, soloRol('contratista'), aceptarOfertaCamionero);

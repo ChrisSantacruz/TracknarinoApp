@@ -3,6 +3,9 @@ import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
+import '../api_service.dart';
+import '../config/api_config.dart';
+
 class NotificationService {
   final FlutterLocalNotificationsPlugin _localNotifications = FlutterLocalNotificationsPlugin();
   FirebaseMessaging? _firebaseMessaging;
@@ -59,6 +62,17 @@ class NotificationService {
         onNotificationTap!(message);
       }
     });
+    final initialMessage = await messaging.getInitialMessage();
+    if (initialMessage != null && onNotificationTap != null) {
+      onNotificationTap!(initialMessage);
+    }
+    final token = await messaging.getToken();
+    if (token != null) {
+      await registerToken(token);
+    }
+    FirebaseMessaging.instance.onTokenRefresh.listen((token) {
+      registerToken(token);
+    });
     _initialized = true;
   }
 
@@ -102,6 +116,16 @@ class NotificationService {
   Future<String?> getDeviceToken() async {
     if (!_initialized || _firebaseMessaging == null) return null;
     return await _firebaseMessaging!.getToken();
+  }
+
+  Future<void> registerToken(String token) async {
+    await ApiService.post(
+      '${ApiConfig.notificaciones}/registrar-token',
+      {
+        'token': token,
+        'platform': defaultTargetPlatform.name,
+      },
+    );
   }
 
   // Suscribirse a un tema

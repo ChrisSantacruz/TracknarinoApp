@@ -4,6 +4,7 @@ const mongoose = require('mongoose');
 
 const Oportunidad = require('../models/Oportunidad');
 const OperationalRoute = require('../models/OperationalRoute');
+const ChatMessage = require('../models/ChatMessage');
 const { getJwtSecret } = require('../utils/auth');
 const operationalLogger = require('../utils/operationalLogger');
 const { recordCounter, recordLatency } = require('./operationalMetricsService');
@@ -18,12 +19,22 @@ const EVENTS = Object.freeze({
   ROUTE_JOIN: 'route:join',
   ROUTE_STATE_CHANGED: 'route:state_changed',
   ROUTE_AUDIT_EVENT: 'route:audit_event',
+  CHAT_JOIN: 'chat:join',
+  CHAT_MESSAGE: 'chat:message',
+  CHAT_MESSAGE_CREATED: 'chat:message_created',
+  CHAT_DELIVERED: 'chat:delivered',
+  CHAT_READ: 'chat:read',
+  OFFER_CREATED: 'offer:created',
+  OFFER_ACCEPTED: 'offer:accepted',
+  OFFER_REJECTED: 'offer:rejected',
 });
 
 const ROOM_PREFIX = Object.freeze({
   CONTRACTOR: 'contractor',
+  CLIENT: 'client',
   CAMIONERO: 'camionero',
   TRIP: 'trip',
+  CHAT: 'chat',
   ROUTE: 'route',
   ALERTS: 'alerts',
 });
@@ -150,7 +161,12 @@ async function canJoinTrip(socket, oportunidadId) {
   const query = { _id: oportunidadId };
 
   if (role === 'contratista') {
-    query.contratista = userId;
+    query.$or = [
+      { contratista: userId },
+      { ownerId: userId },
+    ];
+  } else if (role === 'cliente') {
+    query.ownerId = userId;
   } else if (role === 'camionero') {
     query.camioneroAsignado = userId;
   } else {
@@ -180,6 +196,10 @@ function attachBaseRooms(socket) {
   if (role === 'contratista') {
     joinRoom(socket, room(ROOM_PREFIX.CONTRACTOR, userId));
     joinRoom(socket, room(ROOM_PREFIX.ALERTS, 'contractors'));
+  }
+
+  if (role === 'cliente') {
+    joinRoom(socket, room(ROOM_PREFIX.CLIENT, userId));
   }
 
   if (role === 'camionero') {
@@ -261,6 +281,105 @@ function registerSocketHandlers(socket) {
     } catch (error) {
       realtimeDiagnostics.counters.joinFailures += 1;
       if (typeof ack === 'function') ack({ ok: false, error: 'JOIN_FAILED' });
+    }
+  });
+
+  socket.on(EVENTS.CHAT_JOIN, async (payload, ack) => {
+    const oportunidadId = payload?.oportunidadId || payload?.tripId;
+    try {
+      const allowed = await canJoinTrip(socket, oportunidadId);
+      if (!allowed) {
+        realtimeDiagnostics.counters.forbiddenJoins += 1;
+        if (typeof ack === 'function') ack({ ok: false, error: 'FORBIDDEN' });
+        return;
+      }
+
+      joinRoom(socket, room(ROOM_PREFIX.TRIP, oportunidadId));
+      joinRoom(socket, room(ROOM_PREFIX.CHAT, oportunidadId));
+      if (typeof ack === 'function') ack({ ok: true, room: room(ROOM_PREFIX.CHAT, oportunidadId) });
+    } catch (error) {
+      realtimeDiagnostics.counters.joinFailures += 1;
+      if (typeof ack === 'function') ack({ ok: false, error: 'JOIN_FAILED' });
+    }
+  });
+
+  socket.on(EVENTS.CHAT_MESSAGE, async (payload, ack) => {
+    const oportunidadId = payload?.oportunidadId || payload?.tripId;
+    const message = String(payload?.message || '').trim();
+    try {
+      if (!message || message.length > 2000) {
+        if (typeof ack === 'function') ack({ ok: false, error: 'INVALID_MESSAGE' });
+        return;
+      }
+      const allowed = await canJoinTrip(socket, oportunidadId);
+      if (!allowed) {
+        realtimeDiagnostics.counters.forbiddenJoins += 1;
+        if (typeof ack === 'function') ack({ ok: false, error: 'FORBIDDEN' });
+        return;
+      }
+
+      const chatMessage = await ChatMessage.create({
+        trip: oportunidadId,
+        sender: socket.usuario.id,
+        senderRole: socket.usuario.tipoUsuario,
+        message,
+        deliveredTo: [{ user: socket.usuario.id, at: new Date() }],
+        readBy: [{ user: socket.usuario.id, at: new Date() }],
+      });
+
+      const eventPayload = {
+        version: 1,
+        eventId: `chat.message:${chatMessage._id}`,
+        type: 'chat.message',
+        messageId: chatMessage._id.toString(),
+        oportunidadId: oportunidadId.toString(),
+        senderId: socket.usuario.id,
+        senderRole: socket.usuario.tipoUsuario,
+        message: chatMessage.message,
+        createdAt: chatMessage.createdAt.toISOString(),
+      };
+
+      emitToRooms(EVENTS.CHAT_MESSAGE_CREATED, eventPayload, [
+        room(ROOM_PREFIX.CHAT, oportunidadId),
+        room(ROOM_PREFIX.TRIP, oportunidadId),
+      ]);
+      if (typeof ack === 'function') ack({ ok: true, message: eventPayload });
+    } catch (error) {
+      if (typeof ack === 'function') ack({ ok: false, error: 'CHAT_SEND_FAILED' });
+    }
+  });
+
+  socket.on(EVENTS.CHAT_READ, async (payload, ack) => {
+    const oportunidadId = payload?.oportunidadId || payload?.tripId;
+    try {
+      const allowed = await canJoinTrip(socket, oportunidadId);
+      if (!allowed) {
+        if (typeof ack === 'function') ack({ ok: false, error: 'FORBIDDEN' });
+        return;
+      }
+
+      await ChatMessage.updateMany(
+        {
+          trip: oportunidadId,
+          'readBy.user': { $ne: socket.usuario.id },
+        },
+        {
+          $push: { readBy: { user: socket.usuario.id, at: new Date() } },
+        }
+      );
+
+      const eventPayload = {
+        version: 1,
+        eventId: `chat.read:${oportunidadId}:${socket.usuario.id}:${Date.now()}`,
+        type: 'chat.read',
+        oportunidadId: oportunidadId.toString(),
+        userId: socket.usuario.id,
+        readAt: new Date().toISOString(),
+      };
+      emitToRooms(EVENTS.CHAT_READ, eventPayload, [room(ROOM_PREFIX.CHAT, oportunidadId)]);
+      if (typeof ack === 'function') ack({ ok: true });
+    } catch (error) {
+      if (typeof ack === 'function') ack({ ok: false, error: 'CHAT_READ_FAILED' });
     }
   });
 
@@ -444,7 +563,9 @@ function getRealtimeDiagnostics() {
       routeRooms: `${ROOM_PREFIX.ROUTE}:<routeId>`,
       tripRooms: `${ROOM_PREFIX.TRIP}:<tripId>`,
       contractorRooms: `${ROOM_PREFIX.CONTRACTOR}:<contractorId>`,
+      clientRooms: `${ROOM_PREFIX.CLIENT}:<clientId>`,
       camioneroRooms: `${ROOM_PREFIX.CAMIONERO}:<camioneroId>`,
+      chatRooms: `${ROOM_PREFIX.CHAT}:<tripId>`,
     },
     scaling: {
       stickySessionsRequired: realtimeDiagnostics.adapter.configured,
@@ -480,13 +601,15 @@ function emitTrackingLocationUpdated(payload, { contratistaId, camioneroId, opor
   return emitToRooms(EVENTS.TRACKING_LOCATION_UPDATED, payload, [
     camioneroId ? room(ROOM_PREFIX.CAMIONERO, camioneroId) : null,
     contratistaId ? room(ROOM_PREFIX.CONTRACTOR, contratistaId) : null,
+    payload?.ownerType === 'CLIENTE' && payload?.ownerId ? room(ROOM_PREFIX.CLIENT, payload.ownerId) : null,
     oportunidadId ? room(ROOM_PREFIX.TRIP, oportunidadId) : null,
   ]);
 }
 
-function emitTripStateChanged(payload, { contratistaId, camioneroId, oportunidadId } = {}) {
+function emitTripStateChanged(payload, { contratistaId, camioneroId, oportunidadId, ownerId, ownerType } = {}) {
   return emitToRooms(EVENTS.TRIP_STATE_CHANGED, payload, [
     contratistaId ? room(ROOM_PREFIX.CONTRACTOR, contratistaId) : null,
+    ownerType === 'CLIENTE' && ownerId ? room(ROOM_PREFIX.CLIENT, ownerId) : null,
     camioneroId ? room(ROOM_PREFIX.CAMIONERO, camioneroId) : null,
     oportunidadId ? room(ROOM_PREFIX.TRIP, oportunidadId) : null,
   ]);
@@ -516,6 +639,33 @@ function emitRouteAuditEvent(payload, { contratistaId, camioneroId, oportunidadI
   ]);
 }
 
+function emitOfferCreated(payload, { ownerId, camioneroId, oportunidadId } = {}) {
+  return emitToRooms(EVENTS.OFFER_CREATED, payload, [
+    ownerId ? room(ROOM_PREFIX.CLIENT, ownerId) : null,
+    ownerId ? room(ROOM_PREFIX.CONTRACTOR, ownerId) : null,
+    camioneroId ? room(ROOM_PREFIX.CAMIONERO, camioneroId) : null,
+    oportunidadId ? room(ROOM_PREFIX.TRIP, oportunidadId) : null,
+  ]);
+}
+
+function emitOfferAccepted(payload, { ownerId, camioneroId, oportunidadId } = {}) {
+  return emitToRooms(EVENTS.OFFER_ACCEPTED, payload, [
+    ownerId ? room(ROOM_PREFIX.CLIENT, ownerId) : null,
+    ownerId ? room(ROOM_PREFIX.CONTRACTOR, ownerId) : null,
+    camioneroId ? room(ROOM_PREFIX.CAMIONERO, camioneroId) : null,
+    oportunidadId ? room(ROOM_PREFIX.TRIP, oportunidadId) : null,
+  ]);
+}
+
+function emitOfferRejected(payload, { ownerId, camioneroId, oportunidadId } = {}) {
+  return emitToRooms(EVENTS.OFFER_REJECTED, payload, [
+    ownerId ? room(ROOM_PREFIX.CLIENT, ownerId) : null,
+    ownerId ? room(ROOM_PREFIX.CONTRACTOR, ownerId) : null,
+    camioneroId ? room(ROOM_PREFIX.CAMIONERO, camioneroId) : null,
+    oportunidadId ? room(ROOM_PREFIX.TRIP, oportunidadId) : null,
+  ]);
+}
+
 module.exports = {
   EVENTS,
   ROOM_PREFIX,
@@ -527,4 +677,7 @@ module.exports = {
   emitAlertCreated,
   emitRouteStateChanged,
   emitRouteAuditEvent,
+  emitOfferCreated,
+  emitOfferAccepted,
+  emitOfferRejected,
 };

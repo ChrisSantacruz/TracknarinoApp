@@ -26,10 +26,12 @@ import 'services/notification_service.dart';
 import 'offline/sync_engine.dart';
 
 import 'screens/auth/login_screen.dart';
+import 'screens/auth/role_selection_screen.dart';
 
 import 'screens/camionero/camionero_home_screen.dart';
 
 import 'screens/contratista/contratista_home_screen.dart';
+import 'screens/cliente/cliente_home_screen.dart';
 
 import 'screens/common/loading_widget.dart';
 
@@ -442,6 +444,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
     );
 
+    if (!mounted) return;
+
     await context.read<TripStore>().refreshActiveTrip();
 
   }
@@ -516,6 +520,10 @@ class _AuthWrapperState extends State<AuthWrapper> {
 
     }
 
+    if (auth.phase == AuthBootstrapPhase.roleSelectionRequired) {
+      return const RoleSelectionScreen();
+    }
+
 
 
     final user = auth.currentUser!;
@@ -539,6 +547,8 @@ class _AuthWrapperState extends State<AuthWrapper> {
         'camionero' => CamioneroHomeScreen(usuario: user),
 
         'contratista' => ContratistaHomeScreen(usuario: user),
+
+        'cliente' => ClienteHomeScreen(usuario: user),
 
         _ => const LoginScreen(),
 

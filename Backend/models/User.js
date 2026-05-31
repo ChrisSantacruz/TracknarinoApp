@@ -12,11 +12,27 @@ const userSchema = new mongoose.Schema({
   },
   contraseña: {
     type: String, 
-    required: true
+    required: function() { return this.authProvider !== 'google'; }
+  },
+  authProvider: {
+    type: String,
+    enum: ['password', 'google'],
+    default: 'password'
+  },
+  googleSub: {
+    type: String
+  },
+  fotoPerfil: {
+    type: String,
+    default: ''
+  },
+  rolConfigurado: {
+    type: Boolean,
+    default: function() { return this.tipoUsuario !== 'usuario'; }
   },
   tipoUsuario: {
     type: String, 
-    enum: ['usuario', 'camionero', 'contratista'], 
+    enum: ['usuario', 'camionero', 'contratista', 'cliente'], 
     required: true
   },
   telefono: {
@@ -56,6 +72,23 @@ const userSchema = new mongoose.Schema({
   deviceToken: {
     type: String,
     default: ''
+  },
+  fcmTokens: [{
+    token: { type: String, required: true },
+    platform: {
+      type: String,
+      enum: ['android', 'ios', 'web', 'unknown'],
+      default: 'unknown'
+    },
+    lastSeenAt: { type: Date, default: Date.now },
+    invalidatedAt: { type: Date, default: null }
+  }],
+  reputation: {
+    promedio: { type: Number, min: 0, max: 5, default: 0 },
+    total: { type: Number, default: 0 },
+    totalViajes: { type: Number, default: 0 },
+    totalContrataciones: { type: Number, default: 0 },
+    totalOperaciones: { type: Number, default: 0 }
   },
   camion: {
     tipoVehiculo: {
@@ -136,6 +169,8 @@ const userSchema = new mongoose.Schema({
 });
 
 userSchema.index({ tipoUsuario: 1, estadoAprobacion: 1 });
+userSchema.index({ googleSub: 1 }, { unique: true, sparse: true });
+userSchema.index({ 'fcmTokens.token': 1 }, { sparse: true });
 userSchema.index({ camionerosAfiliados: 1 });
 userSchema.index({ 'camion.placa': 1 }, { sparse: true });
 

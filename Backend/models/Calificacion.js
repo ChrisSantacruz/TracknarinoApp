@@ -8,7 +8,7 @@ const calificacionSchema = new mongoose.Schema({
   },
   tipoServicio: {
     type: String,
-    enum: ['camionero', 'contratista'],
+    enum: ['camionero', 'contratista', 'cliente'],
     required: true
   },
   calificacion: {

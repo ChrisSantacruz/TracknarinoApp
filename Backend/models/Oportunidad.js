@@ -18,6 +18,8 @@ const ACTIVE_TRIP_STATES = ['asignada', 'aceptada', 'en_ruta'];
 
 const NEGOTIATION_STATES = ['sin_oferta', 'oferta_camionero', 'contraoferta_contratista', 'aceptada', 'cancelada'];
 
+const OWNER_TYPES = ['CLIENTE', 'CONTRATISTA'];
+
 
 
 const geoPointSchema = new mongoose.Schema({
@@ -108,9 +110,32 @@ const oportunidadSchema = new mongoose.Schema({
 
   geoMigration: buildGeoMigrationSubdocument(),
 
-  contratista: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  ownerType: { type: String, enum: OWNER_TYPES },
+
+  ownerId: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
+  createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
+  createdByRole: { type: String, enum: ['cliente', 'contratista', 'camionero'] },
+
+  contratista: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
 
   camioneroAsignado: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+
+  trackingId: { type: String, unique: true, sparse: true, trim: true },
+
+  sharedTrackingEnabled: { type: Boolean, default: false },
+
+  deliveryEvidence: {
+    photos: [{ type: String, trim: true }],
+    observations: { type: String, trim: true },
+    deliveredAt: { type: Date },
+    location: {
+      lat: { type: Number },
+      lng: { type: Number },
+    },
+    signatureName: { type: String, trim: true },
+  },
 
   negociacion: {
     estado: { type: String, enum: NEGOTIATION_STATES, default: 'sin_oferta' },
@@ -118,7 +143,7 @@ const oportunidadSchema = new mongoose.Schema({
     precioContraoferta: { type: Number },
     camionero: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
     ultimaAccionPor: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
-    ultimaAccionRol: { type: String, enum: ['camionero', 'contratista'] },
+    ultimaAccionRol: { type: String, enum: ['camionero', 'contratista', 'cliente'] },
     mensaje: { type: String, trim: true },
     updatedAt: { type: Date },
   }
@@ -135,6 +160,8 @@ oportunidadSchema.index({ estado: 1, fecha: 1 });
 
 oportunidadSchema.index({ contratista: 1, estado: 1, fecha: -1 });
 
+oportunidadSchema.index({ ownerType: 1, ownerId: 1, estado: 1, fecha: -1 });
+
 oportunidadSchema.index({ camioneroAsignado: 1, estado: 1, fecha: -1 });
 
 oportunidadSchema.index({ contratista: 1, camioneroAsignado: 1, estado: 1, updatedAt: -1 });
@@ -148,6 +175,22 @@ oportunidadSchema.index({ 'geoMigration.status': 1 });
 
 
 oportunidadSchema.pre('validate', function setCompatibilityFields(next) {
+
+  if (!this.ownerType && this.contratista) {
+    this.ownerType = 'CONTRATISTA';
+  }
+
+  if (!this.ownerId && this.contratista) {
+    this.ownerId = this.contratista;
+  }
+
+  if (!this.createdBy && this.ownerId) {
+    this.createdBy = this.ownerId;
+  }
+
+  if (!this.createdByRole && this.ownerType) {
+    this.createdByRole = this.ownerType.toLowerCase();
+  }
 
   if (this.origin) {
 
@@ -220,6 +263,8 @@ oportunidadSchema.pre('validate', function setCompatibilityFields(next) {
 oportunidadSchema.statics.TRIP_STATES = TRIP_STATES;
 
 oportunidadSchema.statics.ACTIVE_TRIP_STATES = ACTIVE_TRIP_STATES;
+
+oportunidadSchema.statics.OWNER_TYPES = OWNER_TYPES;
 
 
 

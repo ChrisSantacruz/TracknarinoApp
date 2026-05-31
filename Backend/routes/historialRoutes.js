@@ -2,7 +2,8 @@ const express = require('express');
 const router = express.Router();
 const {
   historialCamionero,
-  historialContratista
+  historialContratista,
+  historialCliente
 } = require('../controllers/historialController');
 const verificarToken = require('../middleware/authMiddleware');
 const soloRol = require('../middleware/rolMiddleware');
@@ -12,5 +13,8 @@ router.get('/camionero', verificarToken, soloRol('camionero'), historialCamioner
 
 // Consultar historial de asignaciones de contratista
 router.get('/contratista', verificarToken, soloRol('contratista'), historialContratista);
+
+// Consultar historial de cargas de cliente
+router.get('/cliente', verificarToken, soloRol('cliente'), historialCliente);
 
 module.exports = router;

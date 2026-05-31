@@ -19,6 +19,7 @@ class LocationService extends ChangeNotifier {
   double _heading = 0.0;
   bool _isTracking = false;
   String? _camioneroId;
+  bool _simulationMode = false;
 
   DateTime? _lastServerSendAt;
   Position? _lastSentPosition;
@@ -35,6 +36,8 @@ class LocationService extends ChangeNotifier {
 
   Future<void> init(String camioneroId) async {
     _camioneroId = camioneroId;
+    _simulationMode = camioneroId == '65f13d000000000000000013';
+    if (_simulationMode) return;
     await _checkLocationPermission();
   }
 
@@ -53,6 +56,10 @@ class LocationService extends ChangeNotifier {
   }
 
   Future<Position?> getCurrentLocation() async {
+    if (_simulationMode && _currentPosition != null) {
+      return _currentPosition;
+    }
+
     final hasPermission = await _checkLocationPermission();
     if (!hasPermission) return null;
 
@@ -102,6 +109,12 @@ class LocationService extends ChangeNotifier {
 
   Future<void> startTracking() async {
     if (_isTracking) return;
+
+    if (_simulationMode) {
+      _isTracking = true;
+      notifyListeners();
+      return;
+    }
 
     final hasPermission = await _checkLocationPermission();
     if (!hasPermission) return;
@@ -163,6 +176,34 @@ class LocationService extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> updateSimulatedPosition(
+    Position position, {
+    String? oportunidadId,
+  }) async {
+    if (_currentPosition != null) {
+      _lastPosition = _currentPosition;
+    }
+
+    _currentPosition = position;
+    if (_lastPosition != null) {
+      _heading = _calculateHeading(
+        _lastPosition!.latitude,
+        _lastPosition!.longitude,
+        position.latitude,
+        position.longitude,
+      );
+    }
+
+    if (_camioneroId != null) {
+      await sendLocationToServer(position, oportunidadId: oportunidadId);
+    }
+
+    if (!_positionController.isClosed) {
+      _positionController.add(position);
+    }
+    notifyListeners();
+  }
+
   double _calculateHeading(double lat1, double lon1, double lat2, double lon2) {
     final lat1Rad = lat1 * math.pi / 180;
     final lon1Rad = lon1 * math.pi / 180;
@@ -202,7 +243,10 @@ class LocationService extends ChangeNotifier {
     return '${_camioneroId}_${ts}_${position.latitude.toStringAsFixed(5)}_${position.longitude.toStringAsFixed(5)}';
   }
 
-  Future<void> sendLocationToServer(Position position) async {
+  Future<void> sendLocationToServer(
+    Position position, {
+    String? oportunidadId,
+  }) async {
     if (_camioneroId == null) return;
     if (_shouldThrottleSend(position)) return;
 
@@ -221,6 +265,7 @@ class LocationService extends ChangeNotifier {
         'camioneroId': _camioneroId,
         'localUserId': _camioneroId,
         'source': 'gps',
+        if (oportunidadId != null) 'oportunidadId': oportunidadId,
         'clientEventId': clientEventId,
         'sequence': _sendSequence,
       };

@@ -41,31 +41,27 @@ class OportunidadService {
     }
   }
 
-  // Obtener detalles de una oportunidad específica
-  static Future<Oportunidad?> obtenerDetalleOportunidad(String id) async {
+  static Future<List<Oportunidad>> obtenerOportunidadesCliente() async {
     try {
-      final response = await ApiService.get('${ApiConfig.oportunidades}/$id');
-      return Oportunidad.fromJson(response);
+      final response = await ApiService.get(ApiConfig.oportunidades);
+      return (response as List)
+          .map((data) => Oportunidad.fromJson(data))
+          .toList();
     } catch (e) {
-      debugPrint('Error al obtener detalle de oportunidad: $e');
-      return null;
+      debugPrint('Error al obtener oportunidades del cliente: $e');
+      rethrow;
     }
   }
 
-  // Aplicar a una oportunidad
-  static Future<Map<String, dynamic>> aplicarOportunidad(
-    String oportunidadId,
+  static Future<List<Oportunidad>> obtenerOportunidadesPorOwnerType(
+    String ownerType,
   ) async {
-    try {
-      final response = await ApiService.post(
-        '${ApiConfig.oportunidades}/aplicar/$oportunidadId',
-        {},
-      );
-      return response;
-    } catch (e) {
-      debugPrint('Error al aplicar a oportunidad: $e');
-      rethrow;
-    }
+    final response = await ApiService.get(
+      '${ApiConfig.oportunidades}?ownerType=$ownerType',
+    );
+    return (response as List)
+        .map((data) => Oportunidad.fromJson(data))
+        .toList();
   }
 
   // Crear una nueva oportunidad (solo contratistas)
@@ -213,7 +209,9 @@ class OportunidadService {
     return Oportunidad.fromJson(response['oportunidad']);
   }
 
-  static Future<Oportunidad> aceptarOfertaCamionero(String oportunidadId) async {
+  static Future<Oportunidad> aceptarOfertaCamionero(
+    String oportunidadId,
+  ) async {
     try {
       final response = await ApiService.put(
         '${ApiConfig.oportunidades}/$oportunidadId/oferta/aceptar',
@@ -227,6 +225,35 @@ class OportunidadService {
       );
       return Oportunidad.fromJson(response['oportunidad']);
     }
+  }
+
+  static Future<List<Map<String, dynamic>>> listarOfertas(
+    String oportunidadId,
+  ) async {
+    final response = await ApiService.get(
+      '${ApiConfig.oportunidades}/$oportunidadId/offers',
+    );
+    final offers = response['offers'];
+    if (offers is List) {
+      return offers.map((item) => Map<String, dynamic>.from(item)).toList();
+    }
+    return [];
+  }
+
+  static Future<Oportunidad> aceptarOferta(String offerId) async {
+    final response = await ApiService.put(
+      '${ApiConfig.oportunidades}/offers/$offerId/accept',
+      {},
+    );
+    return Oportunidad.fromJson(response['oportunidad']);
+  }
+
+  static Future<Oportunidad> rechazarOferta(String offerId) async {
+    final response = await ApiService.put(
+      '${ApiConfig.oportunidades}/offers/$offerId/reject',
+      {},
+    );
+    return Oportunidad.fromJson(response['oportunidad']);
   }
 
   static Future<Oportunidad> aceptarContraoferta(String oportunidadId) async {

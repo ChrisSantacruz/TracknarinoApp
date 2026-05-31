@@ -8,6 +8,8 @@ const { emitTripStateChanged } = require('./realtimeService');
 function buildTripEventPayload(oportunidad, eventType) {
   const oportunidadId = oportunidad._id?.toString?.() || oportunidad.id;
   const contratistaId = oportunidad.contratista?.toString?.() || oportunidad.contratista;
+  const ownerId = oportunidad.ownerId?.toString?.() || oportunidad.ownerId || contratistaId;
+  const ownerType = oportunidad.ownerType || 'CONTRATISTA';
   const camioneroId = oportunidad.camioneroAsignado?.toString?.() || oportunidad.camioneroAsignado || null;
 
   return {
@@ -17,6 +19,8 @@ function buildTripEventPayload(oportunidad, eventType) {
     oportunidadId,
     estado: oportunidad.estado,
     contratistaId,
+    ownerId,
+    ownerType,
     camioneroId,
     origin: oportunidad.origin || null,
     destination: oportunidad.destination || null,
@@ -32,6 +36,8 @@ async function publishTripStateChanged(oportunidad, previousState = null) {
 
   emitTripStateChanged(payload, {
     contratistaId: payload.contratistaId,
+    ownerId: payload.ownerId,
+    ownerType: payload.ownerType,
     camioneroId: payload.camioneroId,
     oportunidadId: payload.oportunidadId,
   });

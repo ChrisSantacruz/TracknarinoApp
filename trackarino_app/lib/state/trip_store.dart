@@ -17,6 +17,7 @@ class TripStore extends ChangeNotifier {
   double? _distanceKm;
   String? _durationLabel;
   bool _routeFromCache = false;
+  bool _simulationTripActive = false;
 
   Oportunidad? get activeTrip => _activeTrip;
   ActiveTripLoadStatus get status => _status;
@@ -26,8 +27,15 @@ class TripStore extends ChangeNotifier {
   String? get durationLabel => _durationLabel;
   bool get routeFromCache => _routeFromCache;
   bool get hasActiveTrip => _activeTrip != null;
+  bool get simulationTripActive => _simulationTripActive;
 
   Future<void> refreshActiveTrip() async {
+    if (_simulationTripActive) {
+      _status = ActiveTripLoadStatus.ready;
+      notifyListeners();
+      return;
+    }
+
     _status = ActiveTripLoadStatus.loading;
     _errorMessage = null;
     notifyListeners();
@@ -47,6 +55,7 @@ class TripStore extends ChangeNotifier {
         _distanceKm = null;
         _durationLabel = null;
         _routeFromCache = false;
+        _simulationTripActive = false;
       }
     } catch (e) {
       _errorMessage = 'No se pudo cargar el viaje activo.';
@@ -61,12 +70,18 @@ class TripStore extends ChangeNotifier {
     notifyListeners();
   }
 
+  void setSimulationActiveTrip(Oportunidad trip) {
+    _simulationTripActive = true;
+    setActiveTrip(trip);
+  }
+
   void clearActiveTrip() {
     _activeTrip = null;
     _routePoints = [];
     _distanceKm = null;
     _durationLabel = null;
     _routeFromCache = false;
+    _simulationTripActive = false;
     _status = ActiveTripLoadStatus.idle;
     notifyListeners();
   }

@@ -3,6 +3,19 @@ const User = require('../models/User');
 const { enviarNotificacionFCM } = require('../services/fcmService');
 const { getOriginDestinationPayload } = require('../utils/geoValidation');
 const { publishTripStateChanged } = require('../services/tripEventService');
+const Offer = require('../models/Offer');
+const {
+  buildOpportunityListFilter,
+  getOwnerId,
+  isOpportunityOwner,
+  roleToOwnerType,
+} = require('../services/opportunityAccessService');
+const {
+  createOffer,
+  listOffersForOpportunity,
+  acceptOffer,
+  rejectOffer,
+} = require('../services/offerService');
 
 const ACTIVE_TRIP_STATES = ['asignada', 'aceptada', 'en_ruta'];
 const TERMINAL_TRIP_STATES = ['entregada', 'cancelada'];
@@ -61,6 +74,7 @@ function parsePositiveMoney(value) {
 async function populateOpportunityDetails(oportunidad) {
   await oportunidad.populate('camioneroAsignado', 'nombre correo telefono camion');
   await oportunidad.populate('contratista', 'nombre correo telefono empresa');
+  await oportunidad.populate('ownerId', 'nombre correo telefono empresa fotoPerfil tipoUsuario');
   await oportunidad.populate('negociacion.camionero', 'nombre correo telefono camion');
   return oportunidad;
 }
@@ -87,7 +101,11 @@ const crearOportunidad = async (req, res) => {
       pesoCarga: req.body.pesoCarga,
       tipoCarga: req.body.tipoCarga,
       requisitosEspeciales: req.body.requisitosEspeciales,
-      contratista: req.usuario.id,
+      ownerType: roleToOwnerType(req.usuario.tipoUsuario),
+      ownerId: req.usuario.id,
+      createdBy: req.usuario.id,
+      createdByRole: req.usuario.tipoUsuario,
+      contratista: req.usuario.tipoUsuario === 'contratista' ? req.usuario.id : undefined,
       estado: 'disponible',
       finalizada: false,
       geoMigration: {
@@ -107,8 +125,7 @@ const crearOportunidad = async (req, res) => {
     
     // Opcionalmente, enviar notificaciones a camioneros disponibles
     try {
-      // Buscar camioneros disponibles (solo si quien crea es contratista)
-      if (req.usuario.tipoUsuario === 'contratista') {
+      if (req.usuario.tipoUsuario === 'contratista' || req.usuario.tipoUsuario === 'cliente') {
         const camioneros = await User.find({ 
           tipoUsuario: 'camionero', 
           deviceToken: { $exists: true, $ne: '' },
@@ -122,7 +139,7 @@ const crearOportunidad = async (req, res) => {
             await enviarNotificacionFCM(
               camionero.deviceToken, 
               'Nueva oportunidad disponible', 
-              `${contratista?.nombre || 'Un contratista'} ha publicado una nueva carga de ${routeLabel(oportunidad)}`
+              `${contratista?.nombre || 'Un usuario'} ha publicado una nueva carga de ${routeLabel(oportunidad)}`
             );
           }
         }
@@ -148,14 +165,12 @@ const crearOportunidad = async (req, res) => {
 // Listar oportunidades disponibles (pueden verlas todos los autenticados)
 const listarOportunidades = async (req, res) => {
   try {
-    const filter =
-      req.usuario?.tipoUsuario === 'contratista'
-        ? { contratista: req.usuario.id }
-        : { estado: 'disponible' };
+    const filter = buildOpportunityListFilter(req.usuario, req.query.ownerType);
 
     const oportunidades = await Oportunidad.find(filter)
       .sort({ createdAt: -1 })
       .populate('contratista', 'nombre correo telefono empresa')
+      .populate('ownerId', 'nombre correo telefono empresa fotoPerfil tipoUsuario')
       .populate('camioneroAsignado', 'nombre correo telefono camion')
       .populate('negociacion.camionero', 'nombre correo telefono camion');
     res.json(oportunidades);
@@ -170,11 +185,24 @@ const aceptarOfertaCamionero = async (req, res) => {
     if (!oportunidad) {
       return res.status(404).json({ error: 'Oportunidad no encontrada' });
     }
-    if (oportunidad.contratista.toString() !== req.usuario.id) {
-      return res.status(403).json({ error: 'Solo el contratista puede aceptar esta oferta' });
+    if (!isOpportunityOwner(oportunidad, req.usuario)) {
+      return res.status(403).json({ error: 'Solo el propietario puede aceptar esta oferta' });
     }
     if (oportunidad.estado !== 'disponible') {
       return res.status(400).json({ error: 'Esta carga ya no está disponible para negociación' });
+    }
+    const pendingOffer = await Offer.findOne({
+      oportunidad: oportunidad._id,
+      estado: 'pendiente',
+    }).sort({ precio: 1, createdAt: 1 });
+    if (pendingOffer) {
+      const result = await acceptOffer({ offerId: pendingOffer._id, user: req.usuario });
+      await populateOpportunityDetails(result.oportunidad);
+      return res.json({
+        mensaje: 'Oferta aceptada. Viaje asignado al camionero.',
+        oportunidad: result.oportunidad,
+        offer: result.offer,
+      });
     }
     if (oportunidad.negociacion?.estado !== 'oferta_camionero') {
       return res.status(400).json({ error: 'No hay oferta de camionero pendiente por aceptar' });
@@ -197,7 +225,7 @@ const aceptarOfertaCamionero = async (req, res) => {
     oportunidad.camioneroAsignado = camioneroId;
     oportunidad.negociacion.estado = 'aceptada';
     oportunidad.negociacion.ultimaAccionPor = req.usuario.id;
-    oportunidad.negociacion.ultimaAccionRol = 'contratista';
+    oportunidad.negociacion.ultimaAccionRol = req.usuario.tipoUsuario;
     oportunidad.negociacion.updatedAt = new Date();
     const previousState = setTripState(oportunidad, 'aceptada');
 
@@ -215,37 +243,60 @@ const aceptarOfertaCamionero = async (req, res) => {
 
 const enviarOfertaPrecio = async (req, res) => {
   try {
-    const precioOfertado = parsePositiveMoney(req.body.precioOfertado);
-    if (!precioOfertado) {
-      return res.status(400).json({ error: 'El precio ofertado debe ser mayor a cero' });
-    }
-
-    const oportunidad = await Oportunidad.findById(req.params.id);
-    if (!oportunidad) {
-      return res.status(404).json({ error: 'Oportunidad no encontrada' });
-    }
-    if (oportunidad.estado !== 'disponible') {
-      return res.status(400).json({ error: 'Solo se pueden negociar cargas disponibles' });
-    }
-
-    oportunidad.negociacion = {
-      ...(oportunidad.negociacion?.toObject?.() || oportunidad.negociacion || {}),
-      estado: 'oferta_camionero',
-      precioOfertado,
-      precioContraoferta: undefined,
-      camionero: req.usuario.id,
-      ultimaAccionPor: req.usuario.id,
-      ultimaAccionRol: 'camionero',
-      mensaje: req.body.mensaje,
-      updatedAt: new Date(),
-    };
-
-    await oportunidad.save();
+    const { oportunidad, offer } = await createOffer({
+      oportunidadId: req.params.id,
+      camioneroId: req.usuario.id,
+      precio: req.body.precioOfertado ?? req.body.precio,
+      comentario: req.body.mensaje ?? req.body.comentario,
+    });
     await populateOpportunityDetails(oportunidad);
-    return res.json({ mensaje: 'Oferta enviada', oportunidad });
+    return res.json({ mensaje: 'Oferta enviada', oportunidad, offer });
   } catch (error) {
     console.error('Error al enviar oferta:', error);
-    return res.status(500).json({ error: 'Error al enviar oferta' });
+    return res.status(error.statusCode || 500).json({ error: error.statusCode ? error.message : 'Error al enviar oferta' });
+  }
+};
+
+const listarOfertas = async (req, res) => {
+  try {
+    const { offers } = await listOffersForOpportunity({
+      oportunidadId: req.params.id,
+      user: req.usuario,
+    });
+    return res.json({ offers });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Error al listar ofertas',
+    });
+  }
+};
+
+const aceptarOferta = async (req, res) => {
+  try {
+    const { oportunidad, offer } = await acceptOffer({
+      offerId: req.params.offerId,
+      user: req.usuario,
+    });
+    await populateOpportunityDetails(oportunidad);
+    return res.json({ mensaje: 'Oferta aceptada. Viaje asignado.', oportunidad, offer });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Error al aceptar oferta',
+    });
+  }
+};
+
+const rechazarOferta = async (req, res) => {
+  try {
+    const { oportunidad, offer } = await rejectOffer({
+      offerId: req.params.offerId,
+      user: req.usuario,
+    });
+    return res.json({ mensaje: 'Oferta rechazada', oportunidad, offer });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Error al rechazar oferta',
+    });
   }
 };
 
@@ -552,6 +603,9 @@ module.exports = {
   asignarCamionero,
   finalizarCarga,
   aceptarOportunidad,
+  listarOfertas,
+  aceptarOferta,
+  rechazarOferta,
   enviarOfertaPrecio,
   cancelarOfertaPrecio,
   enviarContraofertaPrecio,

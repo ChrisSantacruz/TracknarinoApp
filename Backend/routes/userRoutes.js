@@ -30,4 +30,21 @@ router.get('/perfil', verificarToken, asyncHandler(async (req, res) => {
   return res.json({ usuario: sanitizeUser(usuario) });
 }));
 
+router.get('/:id/reputation', verificarToken, asyncHandler(async (req, res) => {
+  const usuario = await User.findById(req.params.id).select('tipoUsuario calificacion reputation');
+  if (!usuario) {
+    return sendError(res, 404, 'Usuario no encontrado', 'USER_NOT_FOUND');
+  }
+
+  return res.json({
+    userId: usuario._id,
+    tipoUsuario: usuario.tipoUsuario,
+    promedio: usuario.reputation?.promedio ?? usuario.calificacion ?? 0,
+    total: usuario.reputation?.total ?? 0,
+    totalViajes: usuario.reputation?.totalViajes ?? 0,
+    totalContrataciones: usuario.reputation?.totalContrataciones ?? 0,
+    totalOperaciones: usuario.reputation?.totalOperaciones ?? 0,
+  });
+}));
+
 module.exports = router;

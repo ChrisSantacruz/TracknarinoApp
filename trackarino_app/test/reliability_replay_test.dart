@@ -1,8 +1,10 @@
 import 'dart:convert';
+import 'dart:ffi';
 import 'dart:io';
 
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqlite3/open.dart';
 import 'package:trackarino_app/api_service.dart';
 import 'package:trackarino_app/offline/app_database.dart';
 import 'package:trackarino_app/offline/connectivity_service.dart';
@@ -12,6 +14,9 @@ import 'package:trackarino_app/offline/sync_types.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isWindows) {
+    open.overrideFor(OperatingSystem.windows, _openWindowsSqlite);
+  }
 
   group('Phase 5 replay reliability integration', () {
     late Directory tempDir;
@@ -158,6 +163,10 @@ void main() {
       expect(rows.single.status, SyncStatus.pending);
     });
   });
+}
+
+DynamicLibrary _openWindowsSqlite() {
+  return DynamicLibrary.open('winsqlite3.dll');
 }
 
 SyncEngine _testEngine(

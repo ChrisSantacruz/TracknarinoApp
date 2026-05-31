@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:google_sign_in/google_sign_in.dart';
 
 import 'dart:convert';
 
@@ -9,6 +10,7 @@ import '../models/user_model.dart';
 import '../config/api_config.dart';
 
 import '../api_service.dart';
+import '../offline/sync_engine.dart';
 
 import 'realtime_service.dart';
 
@@ -21,6 +23,8 @@ enum AuthBootstrapPhase {
   unauthenticated,
 
   authenticated,
+
+  roleSelectionRequired,
 
   invalidRole,
 
@@ -39,6 +43,7 @@ class AuthService extends ChangeNotifier {
   final FlutterSecureStorage _storage = FlutterSecureStorage();
 
   static final FlutterSecureStorage _staticStorage = FlutterSecureStorage();
+  GoogleSignIn? _googleSignIn;
 
 
 
@@ -47,6 +52,9 @@ class AuthService extends ChangeNotifier {
   bool get isAuthenticated => _isAuthenticated;
 
   AuthBootstrapPhase get phase => _phase;
+  bool get isSimulationSession =>
+      _currentUser?.sessionType == 'SIMULATION_DRIVER' ||
+      _currentUser?.isSimulation == true;
 
 
 
@@ -56,7 +64,7 @@ class AuthService extends ChangeNotifier {
 
     if (token == null && kDebugMode) {
 
-      print('WARNING: No token found in secure storage');
+      debugPrint('WARNING: No token found in secure storage');
 
     }
 
@@ -174,7 +182,10 @@ class AuthService extends ChangeNotifier {
 
     final role = _currentUser!.tipoUsuario;
 
-    if (role == 'camionero' || role == 'contratista') {
+    if (_currentUser!.rolConfigurado == false || role == 'usuario') {
+      return AuthBootstrapPhase.roleSelectionRequired;
+    }
+    if (role == 'camionero' || role == 'contratista' || role == 'cliente') {
 
       return AuthBootstrapPhase.authenticated;
 
@@ -244,6 +255,100 @@ class AuthService extends ChangeNotifier {
 
     }
 
+  }
+
+  Future<User> signInWithGoogle() async {
+    try {
+      final account = await _googleClient.signIn();
+      if (account == null) {
+        throw const AuthFailure('Inicio de sesión cancelado.');
+      }
+      final auth = await account.authentication;
+      final idToken = auth.idToken;
+      if (idToken == null || idToken.isEmpty) {
+        throw const AuthFailure('Google no entregó un token verificable.');
+      }
+
+      final response = await ApiService.postUnauth(
+        ApiConfig.googleLogin,
+        {'idToken': idToken},
+      );
+      await _storeAuthenticatedResponse(response);
+      notifyListeners();
+      return _currentUser!;
+    } catch (e) {
+      if (e is AuthFailure) rethrow;
+      throw AuthFailure(_friendlyAuthError(e));
+    }
+  }
+
+  Future<User> startSimulationSession() async {
+    try {
+      final response = await ApiService.postUnauth(ApiConfig.simulationLogin, {
+        'sessionType': 'SIMULATION_DRIVER',
+      });
+      await _storeAuthenticatedResponse(response);
+      notifyListeners();
+      return _currentUser!;
+    } catch (e) {
+      if (e is AuthFailure) rethrow;
+      throw AuthFailure(_friendlyAuthError(e));
+    }
+  }
+
+  GoogleSignIn get _googleClient {
+    final existing = _googleSignIn;
+    if (existing != null) return existing;
+
+    final serverClientId =
+        ApiConfig.googleAndroidServerClientId.isNotEmpty
+            ? ApiConfig.googleAndroidServerClientId
+            : ApiConfig.googleWebClientId;
+    final clientId =
+        kIsWeb
+            ? ApiConfig.googleWebClientId
+            : defaultTargetPlatform == TargetPlatform.iOS
+                ? ApiConfig.googleIosClientId
+                : '';
+
+    return _googleSignIn = GoogleSignIn(
+      scopes: const ['email', 'profile'],
+      clientId: clientId.isEmpty ? null : clientId,
+      serverClientId: serverClientId.isEmpty ? null : serverClientId,
+    );
+  }
+
+  Future<User> configureRole(String role) async {
+    if (!['camionero', 'contratista', 'cliente'].contains(role)) {
+      throw const AuthFailure('Selecciona un rol válido.');
+    }
+
+    try {
+      final response = await ApiService.put(ApiConfig.configureRole, {
+        'tipoUsuario': role,
+      });
+      await _storeAuthenticatedResponse(response);
+      notifyListeners();
+      return _currentUser!;
+    } catch (e) {
+      if (e is AuthFailure) rethrow;
+      throw AuthFailure(_friendlyAuthError(e));
+    }
+  }
+
+  Future<void> _storeAuthenticatedResponse(Map<String, dynamic> response) async {
+    if (response['token'] == null || response['usuario'] == null) {
+      throw const AuthFailure('Respuesta del servidor incorrecta');
+    }
+
+    await _storage.write(key: ApiConfig.tokenKey, value: response['token']);
+    _currentUser = User.fromJson(response['usuario']);
+    _isAuthenticated = true;
+    await _storage.write(
+      key: 'user_data',
+      value: jsonEncode(response['usuario']),
+    );
+    _phase = _resolvePhase();
   }
 
 
@@ -316,9 +421,14 @@ class AuthService extends ChangeNotifier {
 
   Future<void> logout() async {
 
+    try {
+      await _googleSignIn?.signOut();
+    } catch (_) {}
+
     await _clearSessionOnly();
 
     RealtimeService.instance.disconnect();
+    SyncEngine.instance.setSimulationOfflineOverride(false);
 
     _phase = AuthBootstrapPhase.unauthenticated;
 

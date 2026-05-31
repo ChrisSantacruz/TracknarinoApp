@@ -39,19 +39,25 @@ function buildTrackingEventPayload(locationDoc, meta = {}) {
   };
 }
 
-async function resolveContractorId(locationDoc) {
+async function resolveTripOwner(locationDoc) {
   if (!locationDoc.oportunidad) return null;
 
-  const trip = await Oportunidad.findById(locationDoc.oportunidad).select('contratista').lean();
-  return trip?.contratista?.toString?.() || null;
+  const trip = await Oportunidad.findById(locationDoc.oportunidad).select('contratista ownerId ownerType').lean();
+  return {
+    contratistaId: trip?.contratista?.toString?.() || null,
+    ownerId: trip?.ownerId?.toString?.() || trip?.contratista?.toString?.() || null,
+    ownerType: trip?.ownerType || 'CONTRATISTA',
+  };
 }
 
 async function publishLocationUpdated(locationDoc, meta = {}) {
   const payload = buildTrackingEventPayload(locationDoc, meta);
-  const contratistaId = await resolveContractorId(locationDoc);
+  const owner = await resolveTripOwner(locationDoc);
+  payload.ownerId = owner?.ownerId || null;
+  payload.ownerType = owner?.ownerType || null;
 
   emitTrackingLocationUpdated(payload, {
-    contratistaId,
+    contratistaId: owner?.contratistaId,
     camioneroId: payload.camioneroId,
     oportunidadId: payload.oportunidadId,
   });

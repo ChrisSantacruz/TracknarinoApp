@@ -53,11 +53,25 @@ class SyncEngine {
   Timer? _scheduledSync;
   DateTime? _lastSyncAttemptAt;
   bool _isRunning = false;
+  bool _simulationOfflineOverride = false;
 
   Stream<SyncQueueSummary> get summaryStream => _repository.watchSummary();
   Stream<ConnectivityHealth> get connectivityStream =>
       _connectivity.healthStream;
   ConnectivityHealth get connectivityHealth => _connectivity.current;
+  bool get simulationOfflineOverride => _simulationOfflineOverride;
+
+  void setSimulationOfflineOverride(bool value) {
+    if (_simulationOfflineOverride == value) return;
+    _simulationOfflineOverride = value;
+    OperationalLogger.warning(
+      OperationalLogCategory.connectivity,
+      value ? 'simulation_signal_lost' : 'simulation_signal_recovered',
+    );
+    if (!value) {
+      triggerSyncSoon(reason: 'simulation_signal_recovered');
+    }
+  }
 
   @visibleForTesting
   factory SyncEngine.test({
@@ -205,6 +219,15 @@ class SyncEngine {
       OperationalLogger.info(
         OperationalLogCategory.sync,
         'sync_skipped_already_running',
+        fields: {'reason': reason},
+      );
+      return;
+    }
+
+    if (_simulationOfflineOverride) {
+      OperationalLogger.info(
+        OperationalLogCategory.connectivity,
+        'sync_skipped_simulation_offline',
         fields: {'reason': reason},
       );
       return;

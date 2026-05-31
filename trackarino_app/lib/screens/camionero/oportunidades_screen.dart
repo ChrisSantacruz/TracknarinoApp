@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:provider/provider.dart';
 
 import '../../models/oportunidad_model.dart';
+import '../../services/auth_service.dart';
 import '../../services/oportunidad_service.dart';
+import '../../state/trip_store.dart';
 import '../../theme/app_colors.dart';
 import '../../theme/app_spacing.dart';
 import '../../widgets/operational/operational_empty_state.dart';
@@ -239,6 +242,12 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
   }
 
   Future<void> _aceptarCarga(Oportunidad oportunidad) async {
+    final auth = context.read<AuthService>();
+    if (auth.isSimulationSession) {
+      await _aceptarCargaSimulada(oportunidad);
+      return;
+    }
+
     final decision = await showModalBottomSheet<_AcceptTripDecision>(
       context: context,
       backgroundColor: Colors.transparent,
@@ -328,6 +337,53 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
         context,
       ).showSnackBar(SnackBar(content: Text(mensaje)));
     }
+  }
+
+  Future<void> _aceptarCargaSimulada(Oportunidad oportunidad) async {
+    if (oportunidad.id == null) return;
+
+    final decision = await showModalBottomSheet<_AcceptTripDecision>(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => _AcceptTripSheet(oportunidad: oportunidad),
+    );
+    if (decision?.accept != true || !mounted) return;
+
+    final user = context.read<AuthService>().currentUser;
+    final simulationTrip = Oportunidad.fromJson({
+      ...oportunidad.toJson(),
+      '_id': oportunidad.id,
+      'estado': 'asignada',
+      'fecha': oportunidad.fecha.toIso8601String(),
+      'camioneroAsignado': user?.id,
+      'contratista': oportunidad.contratistaInfo == null
+          ? oportunidad.contratista
+          : {
+              '_id': oportunidad.contratistaInfo!.id,
+              'nombre': oportunidad.contratistaInfo!.nombre,
+              'correo': oportunidad.contratistaInfo!.correo,
+              'telefono': oportunidad.contratistaInfo!.telefono,
+              'empresa': oportunidad.contratistaInfo!.empresa,
+            },
+    });
+
+    context.read<TripStore>().setSimulationActiveTrip(simulationTrip);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'Instancia de simulación creada. La carga sigue visible para usuarios reales.',
+        ),
+      ),
+    );
+
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => RutaViajeScreen(oportunidad: simulationTrip),
+      ),
+    );
+
+    widget.onTripAccepted?.call();
   }
 }
 

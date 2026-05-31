@@ -30,6 +30,8 @@ const contratistaRoutes = require('./routes/contratistaRoutes');
 const userRoutes = require('./routes/userRoutes');
 const operationalRouteRoutes = require('./routes/operationalRouteRoutes');
 const operationalDiagnosticsRoutes = require('./routes/operationalDiagnosticsRoutes');
+const chatRoutes = require('./routes/chatRoutes');
+const tripExtrasRoutes = require('./routes/tripExtrasRoutes');
 
 // Inicializar app
 const app = express();
@@ -106,7 +108,7 @@ const sensitiveRouteLimiter = rateLimit({
 });
 
 app.use('/api', generalLimiter);
-app.use(['/api/auth/login', '/api/auth/register', '/api/auth/registro'], authLimiter);
+app.use(['/api/auth/login', '/api/auth/register', '/api/auth/registro', '/api/auth/google'], authLimiter);
 app.use(['/api/ors/ruta', '/api/alertas', '/api/ubicacion', '/api/contratistas/tracking', '/api/routing', '/api/operations'], sensitiveRouteLimiter);
 
 // Mantener los payloads acotados; las imágenes deben subirse por un flujo dedicado.
@@ -136,6 +138,8 @@ app.use('/api/contratistas', contratistaRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/routing', operationalRouteRoutes);
 app.use('/api/operations', operationalDiagnosticsRoutes);
+app.use('/api', chatRoutes);
+app.use('/api', tripExtrasRoutes);
 
 app.get('/api/health', (req, res) => {
   const mongoReady = mongoose.connection.readyState === 1;

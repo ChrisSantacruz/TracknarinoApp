@@ -114,6 +114,9 @@ class Oportunidad {
   final bool finalizada;
   final String contratista;
   final OpportunityPerson? contratistaInfo;
+  final String ownerType;
+  final String? ownerId;
+  final OpportunityPerson? ownerInfo;
   final String? camioneroAsignado;
   final DateTime? createdAt;
   final DateTime? updatedAt;
@@ -140,6 +143,9 @@ class Oportunidad {
     required this.finalizada,
     required this.contratista,
     this.contratistaInfo,
+    this.ownerType = 'CONTRATISTA',
+    this.ownerId,
+    this.ownerInfo,
     this.camioneroAsignado,
     this.createdAt,
     this.updatedAt,
@@ -157,6 +163,11 @@ class Oportunidad {
     final contratistaInfo = OpportunityPerson.fromDynamic(json['contratista']);
     final contratistaId =
         contratistaInfo.id.isEmpty ? 'desconocido' : contratistaInfo.id;
+    final ownerInfo =
+        json['ownerId'] == null ? null : OpportunityPerson.fromDynamic(json['ownerId']);
+    final ownerId = ownerInfo?.id.isNotEmpty == true
+        ? ownerInfo!.id
+        : json['ownerId']?.toString();
 
     // Extraer camioneroAsignado (puede ser String, Map o null)
     String? camioneroId;
@@ -201,6 +212,9 @@ class Oportunidad {
           (json['finalizada'] as bool?) ?? (json['estado'] == 'entregada'),
       contratista: contratistaId,
       contratistaInfo: contratistaInfo,
+      ownerType: (json['ownerType'] ?? 'CONTRATISTA').toString(),
+      ownerId: ownerId,
+      ownerInfo: ownerInfo,
       camioneroAsignado: camioneroId,
       createdAt:
           json['createdAt'] != null ? DateTime.parse(json['createdAt']) : null,
@@ -232,6 +246,8 @@ class Oportunidad {
       'estado': estado,
       'finalizada': finalizada,
       'contratista': contratista,
+      'ownerType': ownerType,
+      if (ownerId != null) 'ownerId': ownerId,
       'camioneroAsignado': camioneroAsignado,
       if (pesoCarga != null) 'pesoCarga': pesoCarga,
       if (tipoCarga != null) 'tipoCarga': tipoCarga,

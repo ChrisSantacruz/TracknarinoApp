@@ -7,6 +7,7 @@ const verificarToken = require('../middleware/authMiddleware');
 const asyncHandler = require('../middleware/asyncHandler');
 const { sendError } = require('../middleware/errorMiddleware');
 const { buildAuthToken, sanitizeUser } = require('../utils/auth');
+const { verifyGoogleIdToken } = require('../services/googleAuthService');
 
 const VEHICLE_TYPES = new Set([
   'bus',
@@ -18,6 +19,7 @@ const VEHICLE_TYPES = new Set([
 ]);
 
 const CAPACITY_UNITS = new Set(['kg', 'pasajeros']);
+const OPERATIONAL_ROLES = new Set(['camionero', 'contratista', 'cliente']);
 
 function normalizeText(value) {
   return String(value || '')
@@ -56,6 +58,27 @@ function sendAuthResponse(res, status, mensaje, usuario) {
     token: buildAuthToken(usuario),
     usuario: sanitizeUser(usuario),
   });
+}
+
+function buildSimulationUser() {
+  return {
+    _id: process.env.SIMULATION_DRIVER_ID || '65f13d000000000000000013',
+    nombre: 'Camionero Simulación TrackNariño',
+    correo: 'simulation.driver@tracknarino.local',
+    tipoUsuario: 'camionero',
+    rolConfigurado: true,
+    sessionType: 'SIMULATION_DRIVER',
+    isSimulation: true,
+    camion: {
+      tipoVehiculo: 'camion de carga',
+      marca: 'TrackNariño',
+      modelo: 'SimOps',
+      placa: 'SIM-013',
+      capacidadCarga: 12000,
+      unidadCapacidad: 'kg',
+      papelesAlDia: true,
+    },
+  };
 }
 
 // Handler de registro reutilizable (acepta '/registro' y '/register')
@@ -161,6 +184,90 @@ const handleRegistro = asyncHandler(async (req, res) => {
 router.post('/registro', handleRegistro);
 router.post('/register', handleRegistro);
 
+router.post('/google', asyncHandler(async (req, res) => {
+  const idToken = String(req.body.idToken || '').trim();
+  if (!idToken) {
+    return sendError(res, 400, 'idToken de Google es obligatorio', 'VALIDATION_ERROR');
+  }
+
+  let googleProfile;
+  try {
+    googleProfile = await verifyGoogleIdToken(idToken);
+  } catch (error) {
+    return sendError(
+      res,
+      error.statusCode || 401,
+      error.statusCode === 503 ? error.message : 'No se pudo validar la cuenta de Google',
+      error.code || 'GOOGLE_TOKEN_INVALID'
+    );
+  }
+
+  let usuario = await User.findOne({
+    $or: [
+      { googleSub: googleProfile.googleSub },
+      { correo: googleProfile.correo },
+    ],
+  });
+
+  if (!usuario) {
+    usuario = await User.create({
+      nombre: googleProfile.nombre,
+      correo: googleProfile.correo,
+      authProvider: 'google',
+      googleSub: googleProfile.googleSub,
+      fotoPerfil: googleProfile.fotoPerfil,
+      tipoUsuario: 'usuario',
+      rolConfigurado: false,
+      estadoAprobacion: 'aprobado',
+    });
+  } else {
+    usuario.authProvider = usuario.authProvider || 'google';
+    usuario.googleSub = usuario.googleSub || googleProfile.googleSub;
+    usuario.fotoPerfil = googleProfile.fotoPerfil || usuario.fotoPerfil;
+    usuario.nombre = usuario.nombre || googleProfile.nombre;
+    if (usuario.tipoUsuario !== 'usuario') {
+      usuario.rolConfigurado = true;
+    }
+    await usuario.save();
+  }
+
+  return sendAuthResponse(res, 200, 'Inicio de sesion con Google correcto', usuario);
+}));
+
+router.post('/simulation', asyncHandler(async (req, res) => {
+  return sendAuthResponse(
+    res,
+    200,
+    'Sesión de simulación creada localmente',
+    buildSimulationUser()
+  );
+}));
+
+router.put('/role', verificarToken, asyncHandler(async (req, res) => {
+  const tipoUsuario = normalizeText(req.body.tipoUsuario || req.body.rol);
+  if (!OPERATIONAL_ROLES.has(tipoUsuario)) {
+    return sendError(res, 400, 'Rol operativo invalido', 'VALIDATION_ERROR');
+  }
+
+  const usuario = await User.findById(req.usuario.id);
+  if (!usuario) {
+    return sendError(res, 404, 'Usuario no encontrado', 'USER_NOT_FOUND');
+  }
+
+  if (usuario.rolConfigurado && usuario.tipoUsuario !== 'usuario' && usuario.tipoUsuario !== tipoUsuario) {
+    return sendError(res, 409, 'El rol ya fue configurado para esta cuenta', 'ROLE_ALREADY_CONFIGURED');
+  }
+
+  usuario.tipoUsuario = tipoUsuario;
+  usuario.rolConfigurado = true;
+  if (tipoUsuario === 'cliente') {
+    usuario.estadoAprobacion = 'aprobado';
+  }
+  await usuario.save();
+
+  return sendAuthResponse(res, 200, 'Rol configurado correctamente', usuario);
+}));
+
 // Login de un usuario
 router.post('/login', asyncHandler(async (req, res) => {
   const { correo, contraseña } = req.body;
@@ -174,6 +281,10 @@ router.post('/login', asyncHandler(async (req, res) => {
     return sendError(res, 401, 'Credenciales inválidas', 'INVALID_CREDENTIALS');
   }
 
+  if (!usuario.contraseña) {
+    return sendError(res, 401, 'Esta cuenta debe ingresar con Google', 'GOOGLE_ACCOUNT_REQUIRED');
+  }
+
   const coincide = await bcrypt.compare(contraseña, usuario.contraseña);
   if (!coincide) {
     return sendError(res, 401, 'Credenciales inválidas', 'INVALID_CREDENTIALS');
@@ -184,6 +295,10 @@ router.post('/login', asyncHandler(async (req, res) => {
 
 // Obtener perfil del usuario autenticado
 router.get('/perfil', verificarToken, asyncHandler(async (req, res) => {
+  if (req.usuario.isSimulation) {
+    return res.json({ usuario: sanitizeUser(buildSimulationUser()) });
+  }
+
   const usuario = await User.findById(req.usuario.id).select('-contraseña');
   if (!usuario) {
     return sendError(res, 404, 'Usuario no encontrado', 'USER_NOT_FOUND');

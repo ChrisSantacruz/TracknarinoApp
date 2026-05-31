@@ -15,6 +15,7 @@ function buildAuthToken(usuario) {
     {
       id: usuario._id.toString(),
       tipoUsuario: usuario.tipoUsuario,
+      sessionType: usuario.sessionType,
     },
     getJwtSecret(),
     { expiresIn: TOKEN_EXPIRES_IN }
