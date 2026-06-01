@@ -43,3 +43,6 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Local Google OAuth defines for Flutter web/mobile dev
+/config/google.dev.json

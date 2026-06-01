@@ -5,6 +5,8 @@ const Calificacion = require('../models/Calificacion');
 const User = require('../models/User');
 const verificarToken = require('../middleware/authMiddleware');
 
+const SIMULATION_DRIVER_ID = process.env.SIMULATION_DRIVER_ID || '65f13d000000000000000013';
+
 // Crear una calificación
 router.post('/crear', verificarToken, async (req, res) => {
   try {
@@ -27,8 +29,11 @@ router.post('/crear', verificarToken, async (req, res) => {
       return res.status(400).json({ error: 'No puedes calificarte a ti mismo' });
     }
 
-    const usuarioObjetivo = await User.findById(usuarioId).select('_id tipoUsuario');
-    if (!usuarioObjetivo) {
+    const isSimulationTarget = usuarioId.toString() === SIMULATION_DRIVER_ID;
+    const usuarioObjetivo = isSimulationTarget
+      ? null
+      : await User.findById(usuarioId).select('_id tipoUsuario');
+    if (!usuarioObjetivo && !isSimulationTarget) {
       return res.status(404).json({ error: 'Usuario a calificar no encontrado' });
     }
 
@@ -41,14 +46,16 @@ router.post('/crear', verificarToken, async (req, res) => {
 
     await nuevaCalificacion.save();
 
-    const [stats] = await Calificacion.aggregate([
-      { $match: { usuario: new mongoose.Types.ObjectId(usuarioId) } },
-      { $group: { _id: null, promedio: { $avg: '$calificacion' } } },
-    ]);
+    if (!isSimulationTarget) {
+      const [stats] = await Calificacion.aggregate([
+        { $match: { usuario: new mongoose.Types.ObjectId(usuarioId) } },
+        { $group: { _id: null, promedio: { $avg: '$calificacion' } } },
+      ]);
 
-    await User.findByIdAndUpdate(usuarioId, {
-      calificacion: stats?.promedio ?? null,
-    });
+      await User.findByIdAndUpdate(usuarioId, {
+        calificacion: stats?.promedio ?? null,
+      });
+    }
 
     res.status(201).json({ mensaje: 'Calificación registrada correctamente', nuevaCalificacion });
   } catch (error) {

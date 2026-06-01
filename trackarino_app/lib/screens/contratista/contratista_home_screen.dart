@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -104,7 +105,9 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
       _replaceTrip(updated);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Oferta aceptada. El viaje quedó con ese transportista.'),
+          content: Text(
+            'Oferta aceptada. El viaje quedó con ese transportista.',
+          ),
           backgroundColor: Colors.green,
         ),
       );
@@ -183,9 +186,9 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
       final updated = await OportunidadService.cancelarOfertaPrecio(trip.id!);
       if (!mounted) return;
       _replaceTrip(updated);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Negociación cancelada.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Negociación cancelada.')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -208,29 +211,34 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
   }
 
   List<Oportunidad> get _filteredTrips {
-    final filtered = _createdTrips.where((trip) {
-      switch (_tripFilter) {
-        case 'disponible':
-          return trip.estado == 'disponible';
-        case 'negociacion':
-          return _isNegotiationTrip(trip);
-        case 'asignada':
-          return trip.estado == 'asignada' || trip.estado == 'aceptada';
-        case 'en_ruta':
-          return trip.estado == 'en_ruta';
-        case 'entregada':
-          return trip.estado == 'entregada';
-        default:
-          return true;
-      }
-    }).toList();
+    final filtered =
+        _createdTrips.where((trip) {
+          switch (_tripFilter) {
+            case 'disponible':
+              return trip.estado == 'disponible';
+            case 'negociacion':
+              return _isNegotiationTrip(trip);
+            case 'asignada':
+              return trip.estado == 'asignada' || trip.estado == 'aceptada';
+            case 'en_ruta':
+              return trip.estado == 'en_ruta';
+            case 'entregada':
+              return trip.estado == 'entregada';
+            default:
+              return true;
+          }
+        }).toList();
 
     filtered.sort((a, b) {
-      final priorityComparison = _priorityForTrip(a).compareTo(_priorityForTrip(b));
+      final priorityComparison = _priorityForTrip(
+        a,
+      ).compareTo(_priorityForTrip(b));
       if (priorityComparison != 0) return priorityComparison;
 
-      final aDate = a.updatedAt ?? a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
-      final bDate = b.updatedAt ?? b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final aDate =
+          a.updatedAt ?? a.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
+      final bDate =
+          b.updatedAt ?? b.createdAt ?? DateTime.fromMillisecondsSinceEpoch(0);
       return bDate.compareTo(aDate);
     });
 
@@ -292,19 +300,98 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
       final bytes = await image.readAsBytes();
       if (!mounted) return;
       setState(() => _contractorAvatarBytes = bytes);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Foto actualizada en esta sesión. Falta endpoint para persistirla.',
-          ),
-        ),
-      );
+      await context.read<AuthService>().actualizarPerfil({
+        'fotoPerfil': 'data:image/jpeg;base64,${base64Encode(bytes)}',
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Foto de perfil guardada')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('No se pudo seleccionar la foto: $e')),
       );
     }
+  }
+
+  Future<void> _editOperationalProfile(User usuario) async {
+    final descripcionController = TextEditingController(
+      text: usuario.descripcionOperacion ?? '',
+    );
+    final anioController = TextEditingController(
+      text: usuario.anioFundacion?.toString() ?? '',
+    );
+    final ubicacionController = TextEditingController(
+      text: usuario.ubicacionEmpresa ?? '',
+    );
+    final sitioController = TextEditingController(text: usuario.sitioWeb ?? '');
+
+    final result = await showDialog<Map<String, dynamic>>(
+      context: context,
+      builder:
+          (context) => AlertDialog(
+            title: const Text('Datos operacionales'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: descripcionController,
+                    decoration: const InputDecoration(labelText: 'Descripción'),
+                    maxLines: 3,
+                  ),
+                  TextField(
+                    controller: anioController,
+                    decoration: const InputDecoration(
+                      labelText: 'Año de fundación',
+                    ),
+                    keyboardType: TextInputType.number,
+                  ),
+                  TextField(
+                    controller: ubicacionController,
+                    decoration: const InputDecoration(
+                      labelText: 'Ubicación de la empresa',
+                    ),
+                  ),
+                  TextField(
+                    controller: sitioController,
+                    decoration: const InputDecoration(labelText: 'Sitio web'),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  Navigator.of(context).pop({
+                    'descripcionOperacion': descripcionController.text.trim(),
+                    'anioFundacion': int.tryParse(anioController.text.trim()),
+                    'ubicacionEmpresa': ubicacionController.text.trim(),
+                    'sitioWeb': sitioController.text.trim(),
+                  });
+                },
+                child: const Text('Guardar'),
+              ),
+            ],
+          ),
+    );
+
+    descripcionController.dispose();
+    anioController.dispose();
+    ubicacionController.dispose();
+    sitioController.dispose();
+
+    if (result == null || !mounted) return;
+    await context.read<AuthService>().actualizarPerfil(result);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Datos operacionales guardados')),
+    );
   }
 
   @override
@@ -365,7 +452,7 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
                 _refreshDashboard();
               },
             ),
-            const SeguimientoScreen(),
+            SeguimientoScreen(onTripCompleted: _refreshDashboard),
             _buildPerfilContratista(),
           ],
         ),
@@ -589,7 +676,8 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
         children: [
           const _ProfileSectionHeader(
             title: 'Tus viajes creados',
-            subtitle: 'Gestiona ofertas, contraofertas y estados en tiempo real.',
+            subtitle:
+                'Gestiona ofertas, contraofertas y estados en tiempo real.',
           ),
           const SizedBox(height: AppSpacing.md),
           SingleChildScrollView(
@@ -711,13 +799,6 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
                 ),
             ],
           ),
-          const SizedBox(height: AppSpacing.md),
-          Text(
-            'Datos desde API de flota en tiempo real. Sin métricas estimadas.',
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: AppColors.graphite300),
-          ),
         ],
       ),
     );
@@ -732,6 +813,8 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
   }
 
   Widget _buildPerfilContratista() {
+    final usuario = context.watch<AuthService>().currentUser ?? widget.usuario;
+
     return SingleChildScrollView(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.md,
@@ -755,7 +838,7 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
                       borderRadius: BorderRadius.circular(24),
                       child: _ContractorAvatar(
                         imageBytes: _contractorAvatarBytes,
-                        name: widget.usuario.nombre,
+                        name: usuario.nombre,
                       ),
                     ),
                     const SizedBox(width: AppSpacing.md),
@@ -769,7 +852,7 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
                           ),
                           const SizedBox(height: AppSpacing.sm),
                           Text(
-                            widget.usuario.nombre,
+                            usuario.nombre,
                             style: Theme.of(
                               context,
                             ).textTheme.headlineSmall?.copyWith(
@@ -779,7 +862,7 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
                           ),
                           const SizedBox(height: AppSpacing.xs),
                           Text(
-                            widget.usuario.empresa ?? 'Empresa sin registrar',
+                            usuario.empresa ?? 'Empresa sin registrar',
                             style: Theme.of(context).textTheme.bodyMedium
                                 ?.copyWith(color: AppColors.graphite300),
                           ),
@@ -804,14 +887,43 @@ class _ContratistaHomeScreenState extends State<ContratistaHomeScreen> {
               children: [
                 const _ProfileSectionHeader(
                   title: 'Datos de operación',
-                  subtitle: 'Información real de la sesión autenticada.',
+                  subtitle: 'Información pública para clientes y camioneros.',
                 ),
                 const SizedBox(height: AppSpacing.md),
-                _profileRow('Correo', widget.usuario.correo),
-                _profileRow('Teléfono', widget.usuario.telefono ?? 'Sin dato'),
-                _profileRow('Empresa', widget.usuario.empresa ?? 'Sin dato'),
-                _profileRow('Rol', widget.usuario.tipoUsuario),
-                _profileRow('ID de cuenta', widget.usuario.id ?? 'Sin dato'),
+                _profileRow('Correo', usuario.correo),
+                _profileRow('Teléfono', usuario.telefono ?? 'Sin dato'),
+                _profileRow('Empresa', usuario.empresa ?? 'Sin dato'),
+                _profileRow(
+                  'Descripción',
+                  usuario.descripcionOperacion?.isNotEmpty == true
+                      ? usuario.descripcionOperacion!
+                      : 'Sin descripción',
+                ),
+                _profileRow(
+                  'Año de fundación',
+                  usuario.anioFundacion?.toString() ?? 'Sin dato',
+                ),
+                _profileRow(
+                  'Ubicación',
+                  usuario.ubicacionEmpresa?.isNotEmpty == true
+                      ? usuario.ubicacionEmpresa!
+                      : 'Sin dato',
+                ),
+                _profileRow(
+                  'Sitio web',
+                  usuario.sitioWeb?.isNotEmpty == true
+                      ? usuario.sitioWeb!
+                      : 'Sin dato',
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton.tonalIcon(
+                    onPressed: () => _editOperationalProfile(usuario),
+                    icon: const Icon(Icons.edit_outlined),
+                    label: const Text('Editar datos'),
+                  ),
+                ),
               ],
             ),
           ),
@@ -937,10 +1049,7 @@ class _ContractorTripTile extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
-              PremiumStatusPill(
-                label: priority.label,
-                color: priority.color,
-              ),
+              PremiumStatusPill(label: priority.label, color: priority.color),
               const SizedBox(width: AppSpacing.xs),
               OperationalStatusChip.tracking(trip.estado, compact: true),
             ],
@@ -957,6 +1066,44 @@ class _ContractorTripTile extends StatelessWidget {
             'Precio actual: \$${trip.precio.toStringAsFixed(0)}',
             style: Theme.of(context).textTheme.bodySmall,
           ),
+          if (trip.incentivoPrioridad > 0) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'Bono por prioridad: \$${trip.incentivoPrioridad.toStringAsFixed(0)}',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: AppColors.statusStale,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+          if (trip.vehiculoPreferido != null ||
+              trip.metodoPagoCarga != null ||
+              trip.capacidadRequerida != null) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              [
+                if (trip.vehiculoPreferido != null)
+                  _vehicleLabel(trip.vehiculoPreferido!),
+                if (trip.capacidadRequerida != null)
+                  '${trip.capacidadRequerida!.toStringAsFixed(trip.capacidadRequerida! % 1 == 0 ? 0 : 1)} ${trip.unidadCapacidad}',
+                if (trip.metodoPagoCarga != null)
+                  'Pago: ${_paymentLabel(trip.metodoPagoCarga!)}',
+              ].join(' · '),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppColors.graphite300),
+            ),
+          ],
+          if (negotiation.camionero != null) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'Transportista: ${negotiation.camionero!.nombre}${negotiation.camionero!.telefono == null ? '' : ' · ${negotiation.camionero!.telefono}'}',
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
           if (hasTruckerOffer) ...[
             const SizedBox(height: AppSpacing.xs),
             Text(
@@ -1015,6 +1162,12 @@ class _ContractorTripTile extends StatelessWidget {
   }
 
   ({String label, Color color}) _priorityMeta() {
+    if (trip.prioridad == 'alta') {
+      return (label: 'Prioridad alta', color: AppColors.alertCritical);
+    }
+    if (trip.prioridad == 'media') {
+      return (label: 'Prioridad media', color: AppColors.statusStale);
+    }
     if (trip.negociacion.estado == 'oferta_camionero') {
       return (label: 'Prioridad alta', color: AppColors.alertCritical);
     }
@@ -1030,6 +1183,32 @@ class _ContractorTripTile extends StatelessWidget {
       return (label: 'Prioridad baja', color: AppColors.statusActive);
     }
     return (label: 'Prioridad baja', color: AppColors.graphite700);
+  }
+
+  String _vehicleLabel(String value) {
+    const labels = {
+      'camion_liviano_npr_nqr': 'Camión pequeño (NPR, NQR)',
+      'camion_mediano_frr': 'Camión mediano (FRR)',
+      'camion_grande_ftr_fvr_gh': 'Camión grande (FTR, FVR, GH)',
+      'tractocamion': 'Tractocamión / mula',
+      'camion_refrigerado': 'Camión refrigerado',
+      'camion_plataforma': 'Camión plataforma',
+      'volqueta': 'Volqueta',
+      'camioneta_carga': 'Camioneta de carga',
+      'otro': 'Otro',
+    };
+    return labels[value] ?? value;
+  }
+
+  String _paymentLabel(String value) {
+    const labels = {
+      'transferencia': 'Transferencia',
+      'efectivo': 'Efectivo',
+      'nequi': 'Nequi',
+      'daviplata': 'Daviplata',
+      'mixto': 'Mixto',
+    };
+    return labels[value] ?? value;
   }
 }
 

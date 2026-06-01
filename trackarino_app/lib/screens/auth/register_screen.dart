@@ -99,10 +99,11 @@ class _RegisterScreenState extends State<RegisterScreen> {
           'nombre': _nombreController.text.trim(),
           'correo': _correoController.text.trim(),
           'contraseña': _passwordController.text,
-          'tipoUsuario': 'contratista',
+          'tipoUsuario': _selectedUserType,
           'telefono': _telefonoController.text.trim(),
           'empresa': _empresaController.text.trim(),
-          'disponibleParaSolicitarCamioneros': true,
+          if (_selectedUserType == 'contratista')
+            'disponibleParaSolicitarCamioneros': true,
         };
       }
 
@@ -380,11 +381,30 @@ class _RegisterScreenState extends State<RegisterScreen> {
               ),
             ],
           ),
+          const SizedBox(height: AppSpacing.sm),
+          Row(
+            children: [
+              PremiumChoicePill<String>(
+                value: 'cliente',
+                groupValue: _selectedUserType,
+                onSelected:
+                    (value) => setState(() => _selectedUserType = value),
+                title: 'Cliente',
+                subtitle: 'Crea una carga y monitorea su viaje',
+                icon: Icons.inventory_2_outlined,
+              ),
+            ],
+          ),
           const SizedBox(height: AppSpacing.md),
           Text(
-            _selectedUserType == 'camionero'
-                ? 'El perfil de camionero requiere datos de vehículo para habilitar operación.'
-                : 'El perfil de contratista requiere empresa para crear oportunidades reales.',
+            switch (_selectedUserType) {
+              'camionero' =>
+                'El perfil de camionero requiere datos de vehículo para habilitar operación.',
+              'cliente' =>
+                'El perfil de cliente puede crear una carga activa y monitorear su viaje.',
+              _ =>
+                'El perfil de contratista requiere empresa para crear oportunidades reales.',
+            },
             style: Theme.of(
               context,
             ).textTheme.bodySmall?.copyWith(color: AppColors.graphite300),
@@ -393,7 +413,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
       default:
         return _selectedUserType == 'camionero'
             ? _driverFields()
-            : _contractorFields();
+            : _organizationFields(_selectedUserType);
     }
   }
 
@@ -484,13 +504,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
             child: PremiumTextField(
               controller: _capacidadController,
               label:
-                  _capacityUnit == 'pasajeros'
-                      ? 'Capacidad pasajeros'
+                  _capacityUnit == 'toneladas'
+                      ? 'Capacidad toneladas'
                       : 'Capacidad kg',
-              icon:
-                  _capacityUnit == 'pasajeros'
-                      ? Icons.groups_outlined
-                      : Icons.scale_outlined,
+              icon: Icons.scale_outlined,
               keyboardType: TextInputType.number,
               validator: (value) {
                 final parsed = int.tryParse(value?.trim() ?? '');
@@ -548,13 +565,22 @@ class _RegisterScreenState extends State<RegisterScreen> {
     ];
   }
 
-  List<Widget> _contractorFields() {
+  List<Widget> _organizationFields(String role) {
+    final isClient = role == 'cliente';
+
     return [
       PremiumTextField(
         controller: _empresaController,
-        label: 'Empresa',
-        icon: Icons.business_center_outlined,
-        validator: _required('Ingresa la empresa'),
+        label: isClient ? 'Empresa o nombre comercial' : 'Empresa',
+        hint:
+            isClient
+                ? 'Opcional si publicarás como persona natural'
+                : 'Nombre de la empresa contratante',
+        icon:
+            isClient
+                ? Icons.storefront_outlined
+                : Icons.business_center_outlined,
+        validator: isClient ? null : _required('Ingresa la empresa'),
       ),
     ];
   }
@@ -568,7 +594,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
 }
 
 String _defaultCapacityUnitForVehicle(String vehicleType) {
-  return vehicleType == 'bus' || vehicleType == 'buseta' ? 'pasajeros' : 'kg';
+  return 'kg';
 }
 
 class _VehicleTypeOption {
@@ -579,12 +605,23 @@ class _VehicleTypeOption {
 }
 
 const _vehicleTypeOptions = [
-  _VehicleTypeOption(value: 'piaggio', label: 'Piaggio'),
-  _VehicleTypeOption(value: 'camion piaggio', label: 'Camion Piaggio'),
-  _VehicleTypeOption(value: 'camion de carga', label: 'Camion de carga'),
+  _VehicleTypeOption(
+    value: 'camion_liviano_npr_nqr',
+    label: 'Camión carga pequeño (NPR, NQR)',
+  ),
+  _VehicleTypeOption(
+    value: 'camion_mediano_frr',
+    label: 'Camión carga mediano (FRR)',
+  ),
+  _VehicleTypeOption(
+    value: 'camion_grande_ftr_fvr_gh',
+    label: 'Camión carga grande (FTR, FVR, GH)',
+  ),
+  _VehicleTypeOption(value: 'tractocamion', label: 'Tractocamión / mula'),
+  _VehicleTypeOption(value: 'camion_refrigerado', label: 'Camión refrigerado'),
+  _VehicleTypeOption(value: 'camion_plataforma', label: 'Camión plataforma'),
   _VehicleTypeOption(value: 'volqueta', label: 'Volqueta'),
-  _VehicleTypeOption(value: 'buseta', label: 'Buseta'),
-  _VehicleTypeOption(value: 'bus', label: 'Bus'),
+  _VehicleTypeOption(value: 'camioneta_carga', label: 'Camioneta de carga'),
 ];
 
 class _VehicleTypeDropdown extends StatelessWidget {
@@ -646,10 +683,10 @@ class _CapacityUnitSelector extends StatelessWidget {
           onSelected: (_) => onChanged('kg'),
         ),
         ChoiceChip(
-          selected: value == 'pasajeros',
-          label: const Text('Capacidad en pasajeros'),
-          avatar: const Icon(Icons.groups_outlined, size: 18),
-          onSelected: (_) => onChanged('pasajeros'),
+          selected: value == 'toneladas',
+          label: const Text('Capacidad en toneladas'),
+          avatar: const Icon(Icons.local_shipping_outlined, size: 18),
+          onSelected: (_) => onChanged('toneladas'),
         ),
       ],
     );
@@ -667,14 +704,22 @@ class _StepHeader extends StatelessWidget {
     final titles = [
       'Identidad operacional',
       'Rol dentro de la red',
-      role == 'camionero' ? 'Vehículo y documentos' : 'Empresa contratante',
+      switch (role) {
+        'camionero' => 'Vehículo y documentos',
+        'cliente' => 'Perfil de cliente',
+        _ => 'Empresa contratante',
+      },
     ];
     final subtitles = [
       'Datos base para autenticar y restaurar sesión.',
       'Define qué experiencia y permisos se habilitan.',
-      role == 'camionero'
-          ? 'Información requerida por el backend actual para operar viajes.'
-          : 'Información requerida por el backend actual para publicar cargas.',
+      switch (role) {
+        'camionero' =>
+          'Información requerida por el backend actual para operar viajes.',
+        'cliente' => 'Datos para publicar y monitorear tu carga activa.',
+        _ =>
+          'Información requerida por el backend actual para publicar cargas.',
+      },
     ];
 
     return Column(

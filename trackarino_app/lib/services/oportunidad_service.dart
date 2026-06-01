@@ -19,7 +19,9 @@ class OportunidadService {
   // Obtener listado de oportunidades disponibles
   static Future<List<Oportunidad>> obtenerOportunidadesDisponibles() async {
     try {
-      final response = await ApiService.get(ApiConfig.oportunidades);
+      final response = await ApiService.get(
+        '${ApiConfig.oportunidades}/disponibles',
+      );
       return (response as List)
           .map((data) => Oportunidad.fromJson(data))
           .toList();
@@ -33,7 +35,17 @@ class OportunidadService {
     try {
       final response = await ApiService.get(ApiConfig.oportunidades);
       return (response as List)
-          .map((data) => Oportunidad.fromJson(data))
+          .map((data) {
+            try {
+              return Oportunidad.fromJson(
+                Map<String, dynamic>.from(data as Map),
+              );
+            } catch (e) {
+              debugPrint('Oportunidad omitida por parseo inválido: $e');
+              return null;
+            }
+          })
+          .whereType<Oportunidad>()
           .toList();
     } catch (e) {
       debugPrint('Error al obtener oportunidades del contratista: $e');
@@ -113,6 +125,21 @@ class OportunidadService {
     }
   }
 
+  static Future<Oportunidad> actualizarOportunidad({
+    required String oportunidadId,
+    required Map<String, dynamic> data,
+  }) async {
+    final response = await ApiService.put(
+      '${ApiConfig.oportunidades}/$oportunidadId',
+      data,
+    );
+    return Oportunidad.fromJson(response['oportunidad']);
+  }
+
+  static Future<void> eliminarOportunidad(String oportunidadId) async {
+    await ApiService.delete('${ApiConfig.oportunidades}/$oportunidadId');
+  }
+
   // Asignar un camionero a una oportunidad (solo contratistas)
   static Future<bool> asignarCamionero({
     required String oportunidadId,
@@ -133,6 +160,23 @@ class OportunidadService {
   }
 
   // Finalizar una carga (solo contratistas)
+  static Future<Oportunidad?> confirmarEntrega(String oportunidadId) async {
+    try {
+      final response = await ApiService.put(
+        '${ApiConfig.oportunidades}/$oportunidadId/confirmar-entrega',
+        {},
+      );
+      final payload = response['oportunidad'];
+      if (payload is Map<String, dynamic>) {
+        return Oportunidad.fromJson(payload);
+      }
+      return null;
+    } catch (e) {
+      debugPrint('Error al confirmar entrega: $e');
+      rethrow;
+    }
+  }
+
   static Future<bool> finalizarCarga(String oportunidadId) async {
     try {
       await ApiService.post(

@@ -1,0 +1,25 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "TrackNariño Web (Chrome)",
+      "cwd": "trackarino_app",
+      "request": "launch",
+      "type": "dart",
+      "deviceId": "chrome",
+      "toolArgs": [
+        "--web-port=8080",
+        "--dart-define-from-file=config/google.dev.json"
+      ]
+    },
+    {
+      "name": "TrackNariño Mobile",
+      "cwd": "trackarino_app",
+      "request": "launch",
+      "type": "dart",
+      "toolArgs": [
+        "--dart-define-from-file=config/google.dev.json"
+      ]
+    }
+  ]
+}

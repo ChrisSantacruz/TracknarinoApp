@@ -10,15 +10,17 @@ const { buildAuthToken, sanitizeUser } = require('../utils/auth');
 const { verifyGoogleIdToken } = require('../services/googleAuthService');
 
 const VEHICLE_TYPES = new Set([
-  'bus',
-  'buseta',
-  'piaggio',
-  'camion de carga',
+  'camion_liviano_npr_nqr',
+  'camion_mediano_frr',
+  'camion_grande_ftr_fvr_gh',
+  'tractocamion',
+  'camion_refrigerado',
+  'camion_plataforma',
   'volqueta',
-  'camion piaggio',
+  'camioneta_carga',
 ]);
 
-const CAPACITY_UNITS = new Set(['kg', 'pasajeros']);
+const CAPACITY_UNITS = new Set(['kg', 'toneladas']);
 const OPERATIONAL_ROLES = new Set(['camionero', 'contratista', 'cliente']);
 
 function normalizeText(value) {
@@ -70,7 +72,7 @@ function buildSimulationUser() {
     sessionType: 'SIMULATION_DRIVER',
     isSimulation: true,
     camion: {
-      tipoVehiculo: 'camion de carga',
+      tipoVehiculo: 'camion_mediano_frr',
       marca: 'TrackNariño',
       modelo: 'SimOps',
       placa: 'SIM-013',
@@ -307,12 +309,40 @@ router.get('/perfil', verificarToken, asyncHandler(async (req, res) => {
   return res.json({ usuario: sanitizeUser(usuario) });
 }));
 
+router.put('/perfil', verificarToken, asyncHandler(async (req, res) => {
+  const usuario = await User.findById(req.usuario.id);
+  if (!usuario) {
+    return sendError(res, 404, 'Usuario no encontrado', 'USER_NOT_FOUND');
+  }
+
+  const allowedFields = [
+    'nombre',
+    'telefono',
+    'empresa',
+    'fotoPerfil',
+    'descripcionOperacion',
+    'anioFundacion',
+    'ubicacionEmpresa',
+    'sitioWeb',
+    'metodosPago',
+  ];
+
+  for (const field of allowedFields) {
+    if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+      usuario[field] = req.body[field];
+    }
+  }
+
+  await usuario.save();
+  return res.json({ mensaje: 'Perfil actualizado', usuario: sanitizeUser(usuario) });
+}));
+
 // Actualizar el método de pago del usuario
 router.put('/actualizar-pago', verificarToken, asyncHandler(async (req, res) => {
   const { metodoPago } = req.body;
 
   // Validar el método de pago
-  if (!['Visa', 'Nequi', 'Efectivo'].includes(metodoPago)) {
+  if (!['Visa', 'Nequi', 'Efectivo', 'Transferencia bancaria', 'Daviplata'].includes(metodoPago)) {
     return sendError(res, 400, 'Método de pago inválido', 'VALIDATION_ERROR');
   }
 

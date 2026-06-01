@@ -53,6 +53,8 @@ abstract final class AppColors {
       case 'asignada':
       case 'aceptada':
         return statusStale;
+      case 'stopped':
+        return alertWarning;
       case 'offline':
         return statusOffline;
       default:
@@ -68,6 +70,8 @@ abstract final class AppColors {
         return 'Señal antigua';
       case 'offline':
         return 'Sin señal';
+      case 'stopped':
+        return 'Detenido';
       case 'en_ruta':
         return 'En ruta';
       case 'asignada':

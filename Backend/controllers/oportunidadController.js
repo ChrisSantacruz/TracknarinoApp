@@ -8,6 +8,7 @@ const {
   buildOpportunityListFilter,
   getOwnerId,
   isOpportunityOwner,
+  isAssignedDriver,
   roleToOwnerType,
 } = require('../services/opportunityAccessService');
 const {
@@ -17,6 +18,7 @@ const {
   rejectOffer,
 } = require('../services/offerService');
 
+const SIMULATION_DRIVER_ID = process.env.SIMULATION_DRIVER_ID || '65f13d000000000000000013';
 const ACTIVE_TRIP_STATES = ['asignada', 'aceptada', 'en_ruta'];
 const TERMINAL_TRIP_STATES = ['entregada', 'cancelada'];
 const ALLOWED_TRANSITIONS = {
@@ -71,6 +73,15 @@ function parsePositiveMoney(value) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
 }
 
+async function incrementDriverCompletedTrips(camioneroId) {
+  if (!camioneroId) return;
+  if (camioneroId.toString() === SIMULATION_DRIVER_ID) return;
+
+  await User.findByIdAndUpdate(camioneroId, {
+    $inc: { 'reputation.totalViajes': 1 },
+  });
+}
+
 async function populateOpportunityDetails(oportunidad) {
   await oportunidad.populate('camioneroAsignado', 'nombre correo telefono camion');
   await oportunidad.populate('contratista', 'nombre correo telefono empresa');
@@ -82,6 +93,20 @@ async function populateOpportunityDetails(oportunidad) {
 // Crear oportunidad (contratista o camionero)
 const crearOportunidad = async (req, res) => {
   try {
+    if (req.usuario.tipoUsuario === 'cliente') {
+      const cargaActiva = await Oportunidad.findOne({
+        ownerId: req.usuario.id,
+        estado: { $nin: ['entregada', 'cancelada'] },
+        finalizada: { $ne: true },
+      });
+      if (cargaActiva) {
+        return res.status(409).json({
+          error: 'Como cliente solo puedes tener una carga activa a la vez',
+          mensaje: 'Como cliente solo puedes tener una carga activa a la vez',
+        });
+      }
+    }
+
     const geoPayload = getOriginDestinationPayload(req.body);
     if (geoPayload.error) {
       return res.status(400).json({ error: geoPayload.error, mensaje: geoPayload.error });
@@ -100,6 +125,12 @@ const crearOportunidad = async (req, res) => {
       precio: req.body.precio,
       pesoCarga: req.body.pesoCarga,
       tipoCarga: req.body.tipoCarga,
+      vehiculoPreferido: req.body.vehiculoPreferido,
+      capacidadRequerida: req.body.capacidadRequerida,
+      unidadCapacidad: req.body.unidadCapacidad,
+      metodoPagoCarga: req.body.metodoPagoCarga,
+      prioridad: req.body.prioridad,
+      incentivoPrioridad: req.body.incentivoPrioridad,
       requisitosEspeciales: req.body.requisitosEspeciales,
       ownerType: roleToOwnerType(req.usuario.tipoUsuario),
       ownerId: req.usuario.id,
@@ -162,10 +193,102 @@ const crearOportunidad = async (req, res) => {
   }
 };
 
+const actualizarOportunidad = async (req, res) => {
+  try {
+    const oportunidad = await Oportunidad.findById(req.params.id);
+    if (!oportunidad) {
+      return res.status(404).json({ error: 'Oportunidad no encontrada' });
+    }
+
+    if (!isOpportunityOwner(oportunidad, req.usuario)) {
+      return res.status(403).json({ error: 'Solo el propietario puede modificar esta carga' });
+    }
+
+    if (
+      ACTIVE_TRIP_STATES.includes(oportunidad.estado) ||
+      ['oferta_camionero', 'contraoferta_contratista', 'aceptada'].includes(oportunidad.negociacion?.estado)
+    ) {
+      return res.status(409).json({ error: 'No se puede modificar una carga asignada o en negociación activa' });
+    }
+
+    const editableFields = [
+      'titulo',
+      'descripcion',
+      'fecha',
+      'precio',
+      'pesoCarga',
+      'tipoCarga',
+      'vehiculoPreferido',
+      'capacidadRequerida',
+      'unidadCapacidad',
+      'metodoPagoCarga',
+      'prioridad',
+      'incentivoPrioridad',
+      'requisitosEspeciales',
+    ];
+
+    for (const field of editableFields) {
+      if (Object.prototype.hasOwnProperty.call(req.body, field)) {
+        oportunidad[field] = req.body[field];
+      }
+    }
+
+    if (req.body.origin || req.body.destination) {
+      const geoPayload = getOriginDestinationPayload({
+        origin: req.body.origin || oportunidad.origin,
+        destination: req.body.destination || oportunidad.destination,
+      });
+      if (geoPayload.error) {
+        return res.status(400).json({ error: geoPayload.error, mensaje: geoPayload.error });
+      }
+      oportunidad.origin = geoPayload.origin;
+      oportunidad.destination = geoPayload.destination;
+    }
+
+    await oportunidad.save();
+    await populateOpportunityDetails(oportunidad);
+    return res.json({ mensaje: 'Carga actualizada', oportunidad });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Error al actualizar la carga',
+    });
+  }
+};
+
+const eliminarOportunidad = async (req, res) => {
+  try {
+    const oportunidad = await Oportunidad.findById(req.params.id);
+    if (!oportunidad) {
+      return res.status(404).json({ error: 'Oportunidad no encontrada' });
+    }
+
+    if (!isOpportunityOwner(oportunidad, req.usuario)) {
+      return res.status(403).json({ error: 'Solo el propietario puede eliminar esta carga' });
+    }
+
+    if (ACTIVE_TRIP_STATES.includes(oportunidad.estado)) {
+      return res.status(409).json({ error: 'No se puede eliminar una carga asignada o en ruta' });
+    }
+
+    await oportunidad.deleteOne();
+    return res.json({ mensaje: 'Carga eliminada' });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Error al eliminar la carga',
+    });
+  }
+};
+
 // Listar oportunidades disponibles (pueden verlas todos los autenticados)
 const listarOportunidades = async (req, res) => {
   try {
     const filter = buildOpportunityListFilter(req.usuario, req.query.ownerType);
+    const availableOnly = req.originalUrl.includes('/disponibles');
+    if (availableOnly) {
+      filter.estado = 'disponible';
+      filter.camioneroAsignado = null;
+      filter.finalizada = { $ne: true };
+    }
 
     const oportunidades = await Oportunidad.find(filter)
       .sort({ createdAt: -1 })
@@ -446,12 +569,17 @@ const finalizarCarga = async (req, res) => {
   try {
     const carga = await Oportunidad.findById(req.params.id);
 
-    if (!carga || carga.contratista.toString() !== req.usuario.id) {
+    if (!carga || !isOpportunityOwner(carga, req.usuario)) {
       return res.status(403).json({ error: 'No tienes permisos para finalizar esta carga' });
+    }
+
+    if (carga.estado === 'entregada') {
+      return res.json({ mensaje: 'Carga ya entregada', carga, alreadyDelivered: true });
     }
 
     const previousState = setTripState(carga, 'entregada');
     await carga.save();
+    await incrementDriverCompletedTrips(carga.camioneroAsignado);
     await publishTripStateChanged(carga, previousState);
 
     // Notificación al camionero
@@ -522,14 +650,16 @@ const aceptarOportunidad = async (req, res) => {
     await oportunidad.populate('camioneroAsignado', 'nombre correo telefono');
     await oportunidad.populate('contratista', 'nombre correo');
 
-    // Notificación al contratista
-    const contratista = await User.findById(oportunidad.contratista);
-    if (contratista?.deviceToken) {
+    // Notificación al propietario operativo (cliente o contratista).
+    const ownerId = getOwnerId(oportunidad);
+    const owner = ownerId ? await User.findById(ownerId) : null;
+    if (owner?.deviceToken) {
       const camionero = await User.findById(camioneroId);
+      const camioneroNombre = camionero?.nombre || 'Camionero en simulación';
       await enviarNotificacionFCM(
-        contratista.deviceToken,
+        owner.deviceToken,
         '✅ Carga aceptada',
-        `${camionero.nombre} ha aceptado tu carga de ${routeLabel(oportunidad)}.`
+        `${camioneroNombre} ha aceptado tu carga de ${routeLabel(oportunidad)}.`
       );
     }
 
@@ -560,6 +690,61 @@ const obtenerViajeActivo = async (req, res) => {
   } catch (error) {
     console.error('Error al obtener viaje activo:', error);
     res.status(500).json({ error: 'Error al obtener viaje activo' });
+  }
+};
+
+// Confirmar entrega por el camionero asignado (incluye simulación)
+const confirmarEntrega = async (req, res) => {
+  try {
+    const oportunidad = await Oportunidad.findById(req.params.id);
+    if (!oportunidad) {
+      return res.status(404).json({ error: 'Oportunidad no encontrada' });
+    }
+
+    if (!isAssignedDriver(oportunidad, req.usuario)) {
+      return res.status(403).json({ error: 'No tienes permisos para confirmar esta entrega' });
+    }
+
+    if (!ACTIVE_TRIP_STATES.includes(oportunidad.estado)) {
+      if (oportunidad.estado === 'entregada') {
+        await populateOpportunityDetails(oportunidad);
+        return res.json({
+          mensaje: 'La entrega ya estaba confirmada',
+          oportunidad,
+          alreadyDelivered: true,
+        });
+      }
+      return res.status(400).json({ error: 'Este viaje no está en curso' });
+    }
+
+    const previousState = setTripState(oportunidad, 'entregada');
+    await oportunidad.save();
+    await incrementDriverCompletedTrips(oportunidad.camioneroAsignado);
+    await publishTripStateChanged(oportunidad, previousState);
+
+    const ownerId = getOwnerId(oportunidad);
+    const owner = ownerId ? await User.findById(ownerId).select('deviceToken nombre') : null;
+    if (owner?.deviceToken) {
+      const camioneroNombre = req.usuario.isSimulation
+        ? 'Camionero en simulación'
+        : (req.usuario.nombre || 'Camionero');
+      await enviarNotificacionFCM(
+        owner.deviceToken,
+        '✅ Carga entregada',
+        `${camioneroNombre} confirmó la entrega de ${routeLabel(oportunidad)}`,
+      );
+    }
+
+    await populateOpportunityDetails(oportunidad);
+    return res.json({
+      mensaje: 'Entrega confirmada correctamente',
+      oportunidad,
+    });
+  } catch (error) {
+    console.error('Error al confirmar entrega:', error);
+    return res.status(error.statusCode || 500).json({
+      error: error.statusCode ? error.message : 'Error al confirmar la entrega',
+    });
   }
 };
 
@@ -599,9 +784,12 @@ const iniciarViaje = async (req, res) => {
 
 module.exports = {
   crearOportunidad,
+  actualizarOportunidad,
+  eliminarOportunidad,
   listarOportunidades,
   asignarCamionero,
   finalizarCarga,
+  confirmarEntrega,
   aceptarOportunidad,
   listarOfertas,
   aceptarOferta,

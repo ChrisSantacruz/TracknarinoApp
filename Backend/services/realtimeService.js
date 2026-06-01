@@ -230,13 +230,17 @@ function registerSocketHandlers(socket) {
   });
 
   socket.on(EVENTS.FLEET_SUBSCRIBE, (ack) => {
-    if (socket.usuario.tipoUsuario !== 'contratista') {
+    const role = socket.usuario.tipoUsuario;
+    if (role !== 'contratista' && role !== 'cliente') {
       if (typeof ack === 'function') ack({ ok: false, error: 'FORBIDDEN' });
       return;
     }
 
-    joinRoom(socket, room(ROOM_PREFIX.CONTRACTOR, socket.usuario.id));
-    if (typeof ack === 'function') ack({ ok: true, room: room(ROOM_PREFIX.CONTRACTOR, socket.usuario.id) });
+    const fleetRoom = role === 'cliente'
+      ? room(ROOM_PREFIX.CLIENT, socket.usuario.id)
+      : room(ROOM_PREFIX.CONTRACTOR, socket.usuario.id);
+    joinRoom(socket, fleetRoom);
+    if (typeof ack === 'function') ack({ ok: true, room: fleetRoom });
   });
 
   socket.on(EVENTS.TRIP_JOIN, async (payload, ack) => {

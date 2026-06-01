@@ -30,6 +30,7 @@ function buildTrackingEventPayload(locationDoc, meta = {}) {
     heading: locationDoc.heading ?? null,
     speed: locationDoc.speed ?? null,
     trackingStatus: meta.trackingStatus || null,
+    operationalEvent: locationDoc.operationalEvent || null,
     meta: {
       ageMs: meta.ageMs ?? null,
       isStale: meta.isStale === true,

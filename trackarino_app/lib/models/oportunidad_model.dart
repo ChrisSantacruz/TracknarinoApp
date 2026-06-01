@@ -122,6 +122,12 @@ class Oportunidad {
   final DateTime? updatedAt;
   final int? pesoCarga; // Peso en toneladas
   final String? tipoCarga;
+  final String? vehiculoPreferido;
+  final double? capacidadRequerida;
+  final String unidadCapacidad;
+  final String? metodoPagoCarga;
+  final String prioridad;
+  final double incentivoPrioridad;
   final String? requisitosEspeciales;
   final int? distanciaKm;
   final int? duracionEstimadaHoras;
@@ -151,6 +157,12 @@ class Oportunidad {
     this.updatedAt,
     this.pesoCarga,
     this.tipoCarga,
+    this.vehiculoPreferido,
+    this.capacidadRequerida,
+    this.unidadCapacidad = 'toneladas',
+    this.metodoPagoCarga,
+    this.prioridad = 'baja',
+    this.incentivoPrioridad = 0,
     this.requisitosEspeciales,
     this.distanciaKm,
     this.duracionEstimadaHoras,
@@ -164,10 +176,13 @@ class Oportunidad {
     final contratistaId =
         contratistaInfo.id.isEmpty ? 'desconocido' : contratistaInfo.id;
     final ownerInfo =
-        json['ownerId'] == null ? null : OpportunityPerson.fromDynamic(json['ownerId']);
-    final ownerId = ownerInfo?.id.isNotEmpty == true
-        ? ownerInfo!.id
-        : json['ownerId']?.toString();
+        json['ownerId'] == null
+            ? null
+            : OpportunityPerson.fromDynamic(json['ownerId']);
+    final ownerId =
+        ownerInfo?.id.isNotEmpty == true
+            ? ownerInfo!.id
+            : json['ownerId']?.toString();
 
     // Extraer camioneroAsignado (puede ser String, Map o null)
     String? camioneroId;
@@ -202,8 +217,9 @@ class Oportunidad {
       destino: destination?.name ?? json['destino'] ?? 'Destino sin nombre',
       direccionCargue: origin?.address ?? json['direccionCargue'],
       direccionDescargue: destination?.address ?? json['direccionDescargue'],
-      fecha: DateTime.parse(json['fecha']),
-      precio: (json['precio'] as num).toDouble(),
+      fecha:
+          DateTime.tryParse(json['fecha']?.toString() ?? '') ?? DateTime.now(),
+      precio: (json['precio'] as num?)?.toDouble() ?? 0,
       estado:
           json['estado'] == 'finalizada'
               ? 'entregada'
@@ -220,8 +236,15 @@ class Oportunidad {
           json['createdAt'] != null ? DateTime.parse(json['createdAt']) : null,
       updatedAt:
           json['updatedAt'] != null ? DateTime.parse(json['updatedAt']) : null,
-      pesoCarga: json['pesoCarga'],
+      pesoCarga:
+          json['pesoCarga'] is num ? (json['pesoCarga'] as num).round() : null,
       tipoCarga: json['tipoCarga'],
+      vehiculoPreferido: json['vehiculoPreferido'],
+      capacidadRequerida: (json['capacidadRequerida'] as num?)?.toDouble(),
+      unidadCapacidad: (json['unidadCapacidad'] ?? 'toneladas').toString(),
+      metodoPagoCarga: json['metodoPagoCarga'],
+      prioridad: (json['prioridad'] ?? 'baja').toString(),
+      incentivoPrioridad: (json['incentivoPrioridad'] as num?)?.toDouble() ?? 0,
       requisitosEspeciales: json['requisitosEspeciales'],
       distanciaKm: json['distanciaKm'],
       duracionEstimadaHoras: json['duracionEstimadaHoras'],
@@ -251,6 +274,12 @@ class Oportunidad {
       'camioneroAsignado': camioneroAsignado,
       if (pesoCarga != null) 'pesoCarga': pesoCarga,
       if (tipoCarga != null) 'tipoCarga': tipoCarga,
+      if (vehiculoPreferido != null) 'vehiculoPreferido': vehiculoPreferido,
+      if (capacidadRequerida != null) 'capacidadRequerida': capacidadRequerida,
+      'unidadCapacidad': unidadCapacidad,
+      if (metodoPagoCarga != null) 'metodoPagoCarga': metodoPagoCarga,
+      'prioridad': prioridad,
+      'incentivoPrioridad': incentivoPrioridad,
       if (requisitosEspeciales != null)
         'requisitosEspeciales': requisitosEspeciales,
       if (distanciaKm != null) 'distanciaKm': distanciaKm,

@@ -8,22 +8,27 @@ import 'package:trackarino_app/services/location_service.dart';
 import 'package:trackarino_app/services/notification_service.dart';
 
 void main() {
-  testWidgets('Login screen renders Google access entrypoint', (
-    WidgetTester tester,
-  ) async {
-    await tester.pumpWidget(
-      MultiProvider(
-        providers: [
-          ChangeNotifierProvider(create: (_) => AuthService()),
-          ChangeNotifierProvider(create: (_) => LocationService()),
-          Provider(create: (_) => NotificationService()),
-        ],
-        child: const MaterialApp(home: LoginScreen()),
-      ),
-    );
+  testWidgets(
+    'Login screen renders password, Google and register entrypoints',
+    (WidgetTester tester) async {
+      await tester.pumpWidget(
+        MultiProvider(
+          providers: [
+            ChangeNotifierProvider(create: (_) => AuthService()),
+            ChangeNotifierProvider(create: (_) => LocationService()),
+            Provider(create: (_) => NotificationService()),
+          ],
+          child: const MaterialApp(home: LoginScreen()),
+        ),
+      );
 
-    expect(find.text('TrackNariño'), findsOneWidget);
-    expect(find.text('Bienvenido a tu operación'), findsOneWidget);
-    expect(find.text('Continuar con Google'), findsOneWidget);
-  });
+      expect(find.text('TrackNariño'), findsOneWidget);
+      expect(find.text('Bienvenido a tu operación'), findsOneWidget);
+      expect(find.text('Correo operativo'), findsWidgets);
+      expect(find.text('Contraseña'), findsWidgets);
+      expect(find.text('Iniciar sesión'), findsOneWidget);
+      expect(find.text('Continuar con Google'), findsOneWidget);
+      expect(find.text('Crear cuenta operativa'), findsOneWidget);
+    },
+  );
 }

@@ -14,7 +14,7 @@ router.post('/afiliar/:id', verificarToken, soloRol('contratista'), afiliarCamio
 // Rechazar afiliación de camionero
 router.post('/rechazar/:id', verificarToken, soloRol('contratista'), rechazarAfiliacion);
 
-// Tracking real de flota para polling de contratistas
-router.get('/tracking/flota', verificarToken, soloRol('contratista'), obtenerFlotaTracking);
+// Tracking real de flota/viajes para polling de contratistas y clientes
+router.get('/tracking/flota', verificarToken, soloRol(['contratista', 'cliente']), obtenerFlotaTracking);
 
 module.exports = router;

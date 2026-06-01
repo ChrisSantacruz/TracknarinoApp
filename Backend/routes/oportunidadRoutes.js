@@ -2,6 +2,8 @@ const express = require('express');
 const router = express.Router();
 const {
   crearOportunidad,
+  actualizarOportunidad,
+  eliminarOportunidad,
   listarOportunidades,
   asignarCamionero,
   finalizarCarga,
@@ -19,6 +21,9 @@ const soloRol = require('../middleware/rolMiddleware');
 
 // Crear oportunidad (clientes y contratistas)
 router.post('/crear', verificarToken, soloRol(['contratista', 'cliente']), crearOportunidad);
+
+router.put('/:id', verificarToken, soloRol(['contratista', 'cliente']), actualizarOportunidad);
+router.delete('/:id', verificarToken, soloRol(['contratista', 'cliente']), eliminarOportunidad);
 
 // Listar todas las oportunidades (ruta principal)
 router.get('/', verificarToken, listarOportunidades);
@@ -52,7 +57,10 @@ router.get('/viaje-activo', verificarToken, soloRol('camionero'), require('../co
 // Iniciar viaje (cambiar estado a en_ruta)
 router.put('/:id/iniciar', verificarToken, soloRol('camionero'), require('../controllers/oportunidadController').iniciarViaje);
 
-// Finalizar una carga (solo contratista)
-router.post('/finalizar/:id', verificarToken, soloRol('contratista'), finalizarCarga);
+// Confirmar entrega (camionero asignado, incluye simulación)
+router.put('/:id/confirmar-entrega', verificarToken, soloRol('camionero'), require('../controllers/oportunidadController').confirmarEntrega);
+
+// Finalizar una carga (propietario cliente o contratista)
+router.post('/finalizar/:id', verificarToken, soloRol(['contratista', 'cliente']), finalizarCarga);
 
 module.exports = router;

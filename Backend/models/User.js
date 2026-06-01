@@ -60,8 +60,32 @@ const userSchema = new mongoose.Schema({
   },
   metodoPago: {
     type: String,
-    enum: ['Visa', 'Nequi', 'Efectivo'],
+    enum: ['Visa', 'Nequi', 'Efectivo', 'Transferencia bancaria', 'Daviplata'],
     required: false
+  },
+  metodosPago: [{
+    type: String,
+    enum: ['Nequi', 'Transferencia bancaria', 'Efectivo', 'Daviplata']
+  }],
+  descripcionOperacion: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  anioFundacion: {
+    type: Number,
+    min: 1800,
+    max: 2200
+  },
+  ubicacionEmpresa: {
+    type: String,
+    trim: true,
+    default: ''
+  },
+  sitioWeb: {
+    type: String,
+    trim: true,
+    default: ''
   },
   calificacion: {
     type: Number,
@@ -93,7 +117,16 @@ const userSchema = new mongoose.Schema({
   camion: {
     tipoVehiculo: {
       type: String,
-      enum: ['bus', 'buseta', 'piaggio', 'camion de carga', 'volqueta', 'camion piaggio'],
+      enum: [
+        'camion_liviano_npr_nqr',
+        'camion_mediano_frr',
+        'camion_grande_ftr_fvr_gh',
+        'tractocamion',
+        'camion_refrigerado',
+        'camion_plataforma',
+        'volqueta',
+        'camioneta_carga',
+      ],
       required: function() { return this.tipoUsuario === 'camionero'; }
     },
     capacidadCarga: {
@@ -102,7 +135,7 @@ const userSchema = new mongoose.Schema({
     },
     unidadCapacidad: {
       type: String,
-      enum: ['kg', 'pasajeros'],
+      enum: ['kg', 'toneladas'],
       default: 'kg'
     },
     marca: {

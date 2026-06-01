@@ -8,7 +8,16 @@ const vehiculoSchema = new mongoose.Schema({
   },
   tipoVehiculo: {
     type: String,
-    enum: ['bus', 'buseta', 'piaggio', 'camion de carga', 'volqueta', 'camion piaggio'],
+    enum: [
+      'camion_liviano_npr_nqr',
+      'camion_mediano_frr',
+      'camion_grande_ftr_fvr_gh',
+      'tractocamion',
+      'camion_refrigerado',
+      'camion_plataforma',
+      'volqueta',
+      'camioneta_carga',
+    ],
     required: true
   },
   capacidadCarga: {
@@ -17,7 +26,7 @@ const vehiculoSchema = new mongoose.Schema({
   },
   unidadCapacidad: {
     type: String,
-    enum: ['kg', 'pasajeros'],
+    enum: ['kg', 'toneladas'],
     default: 'kg'
   },
   marca: {

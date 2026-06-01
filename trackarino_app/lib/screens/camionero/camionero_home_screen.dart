@@ -120,7 +120,9 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
               ? LatLng(origin.lat, origin.lng)
               : null;
       final position =
-          currentPosition == null ? await _locationService.getCurrentLocation() : null;
+          currentPosition == null
+              ? await _locationService.getCurrentLocation()
+              : null;
       if (currentPosition == null && position == null) return;
 
       final startPosition =
@@ -942,9 +944,7 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
             ? 'en_ruta'
             : tieneOportunidadActiva
             ? 'asignada'
-            : _isDisponible
-            ? 'active'
-            : 'offline';
+            : 'active';
 
     return Positioned(
       left: 0,
@@ -985,38 +985,9 @@ class _CamioneroHomeScreenState extends State<CamioneroHomeScreen> {
                         ),
                         if (!tieneOportunidadActiva) ...[
                           const SizedBox(height: AppSpacing.sm),
-                          Row(
-                            children: [
-                              Text(
-                                'Disponible',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                              const SizedBox(width: AppSpacing.sm),
-                              Switch(
-                                value: _isDisponible,
-                                onChanged: (value) async {
-                                  setState(() => _isDisponible = value);
-                                  final authService = Provider.of<AuthService>(
-                                    context,
-                                    listen: false,
-                                  );
-                                  await authService.guardarEstadoDisponible(
-                                    value,
-                                  );
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(
-                                        content: Text(
-                                          value
-                                              ? 'Disponible para oportunidades'
-                                              : 'No disponible',
-                                        ),
-                                      ),
-                                    );
-                                  }
-                                },
-                              ),
-                            ],
+                          Text(
+                            'Disponible para aceptar oportunidades',
+                            style: Theme.of(context).textTheme.bodySmall,
                           ),
                         ],
                       ],

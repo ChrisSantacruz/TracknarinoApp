@@ -26,6 +26,33 @@ class CrearOportunidadScreen extends StatefulWidget {
 
 class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
   static const LatLng _defaultMapCenter = LatLng(1.2136, -77.2811);
+  static const Map<String, String> _vehicleLabels = {
+    'camion_liviano_npr_nqr': 'Camión carga pequeño (NPR, NQR)',
+    'camion_mediano_frr': 'Camión carga mediano (FRR)',
+    'camion_grande_ftr_fvr_gh': 'Camión carga grande (FTR, FVR, GH)',
+    'tractocamion': 'Tractocamión / mula',
+    'camion_refrigerado': 'Camión refrigerado',
+    'camion_plataforma': 'Camión plataforma',
+    'volqueta': 'Volqueta',
+    'camioneta_carga': 'Camioneta de carga',
+    'otro': 'Otro',
+  };
+  static const Map<String, String> _capacityUnitLabels = {
+    'toneladas': 'Toneladas',
+    'kg': 'Kilogramos',
+  };
+  static const Map<String, String> _paymentLabels = {
+    'transferencia': 'Transferencia',
+    'efectivo': 'Efectivo',
+    'nequi': 'Nequi',
+    'daviplata': 'Daviplata',
+    'mixto': 'Mixto',
+  };
+  static const Map<String, String> _priorityLabels = {
+    'baja': 'Baja',
+    'media': 'Media',
+    'alta': 'Alta',
+  };
 
   final _formKey = GlobalKey<FormState>();
   final _routeMapController = MapController();
@@ -36,6 +63,7 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
   final _precioController = TextEditingController();
   final _pesoCargaController = TextEditingController();
   final _tipoCargaController = TextEditingController();
+  final _incentivoPrioridadController = TextEditingController();
   final _direccionCargueController = TextEditingController();
   final _direccionDescargueController = TextEditingController();
   final _requisitosController = TextEditingController();
@@ -45,6 +73,10 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
   final _destinoLngController = TextEditingController();
 
   DateTime _fechaSeleccionada = DateTime.now().add(const Duration(days: 1));
+  String _vehiculoPreferido = 'camion_liviano_npr_nqr';
+  String _unidadCapacidad = 'toneladas';
+  String _metodoPagoCarga = 'transferencia';
+  String _prioridadCarga = 'baja';
   bool _isLoading = false;
   bool _routeLoading = false;
   bool _pickingOrigin = true;
@@ -64,6 +96,7 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
     _precioController.dispose();
     _pesoCargaController.dispose();
     _tipoCargaController.dispose();
+    _incentivoPrioridadController.dispose();
     _direccionCargueController.dispose();
     _direccionDescargueController.dispose();
     _requisitosController.dispose();
@@ -250,11 +283,27 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
       final precioParsed = double.tryParse(
         _precioController.text.replaceAll(',', ''),
       );
-      final pesoCargaParsed = int.tryParse(_pesoCargaController.text);
+      final capacidadParsed = double.tryParse(
+        _pesoCargaController.text.trim().replaceAll(',', '.'),
+      );
+      final incentivoParsed =
+          double.tryParse(
+            _incentivoPrioridadController.text.trim().replaceAll(',', ''),
+          ) ??
+          0;
 
-      if (precioParsed == null || pesoCargaParsed == null) {
-        throw Exception('Precio o peso de carga inválido');
+      if (precioParsed == null || capacidadParsed == null) {
+        throw Exception('Precio o capacidad inválidos');
       }
+      if (incentivoParsed < 0) {
+        throw Exception('El incentivo no puede ser negativo');
+      }
+      final prioridadFinal =
+          incentivoParsed <= 0
+              ? 'baja'
+              : _prioridadCarga == 'baja'
+              ? 'media'
+              : _prioridadCarga;
 
       final origenLat = _parseCoordinate(
         _origenLatController.text,
@@ -300,8 +349,15 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
         'direccionDescargue': _direccionDescargueController.text.trim(),
         'fecha': _fechaSeleccionada.toIso8601String(),
         'precio': precioParsed,
-        'pesoCarga': pesoCargaParsed,
+        'pesoCarga':
+            _unidadCapacidad == 'toneladas' ? capacidadParsed.round() : null,
+        'capacidadRequerida': capacidadParsed,
+        'unidadCapacidad': _unidadCapacidad,
         'tipoCarga': _tipoCargaController.text.trim(),
+        'vehiculoPreferido': _vehiculoPreferido,
+        'metodoPagoCarga': _metodoPagoCarga,
+        'prioridad': prioridadFinal,
+        'incentivoPrioridad': incentivoParsed,
         'requisitosEspeciales':
             _requisitosController.text.isEmpty
                 ? null
@@ -418,15 +474,28 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
                             validator: _required('Ingresa el tipo de carga'),
                           ),
                           const SizedBox(height: AppSpacing.md),
+                          _ChoiceGroup(
+                            title: 'Vehículo preferido',
+                            values: _vehicleLabels,
+                            selected: _vehiculoPreferido,
+                            onSelected:
+                                (value) => setState(() {
+                                  _vehiculoPreferido = value;
+                                }),
+                          ),
+                          const SizedBox(height: AppSpacing.md),
                           Row(
                             children: [
                               Expanded(
                                 child: PremiumTextField(
                                   controller: _pesoCargaController,
-                                  label: 'Peso toneladas',
+                                  label:
+                                      _unidadCapacidad == 'kg'
+                                          ? 'Peso en kilogramos'
+                                          : 'Peso en toneladas',
                                   icon: Icons.scale_outlined,
                                   keyboardType: TextInputType.number,
-                                  validator: _positiveInt(
+                                  validator: _positiveNumber(
                                     'Ingresa un peso válido',
                                   ),
                                 ),
@@ -442,6 +511,48 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
                                 ),
                               ),
                             ],
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          _ChoiceGroup(
+                            title: 'Unidad de peso',
+                            values: _capacityUnitLabels,
+                            selected: _unidadCapacidad,
+                            onSelected:
+                                (value) =>
+                                    setState(() => _unidadCapacidad = value),
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          _ChoiceGroup(
+                            title: 'Método de pago de la carga',
+                            values: _paymentLabels,
+                            selected: _metodoPagoCarga,
+                            onSelected:
+                                (value) =>
+                                    setState(() => _metodoPagoCarga = value),
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          _ChoiceGroup(
+                            title: 'Prioridad',
+                            values: _priorityLabels,
+                            selected: _prioridadCarga,
+                            onSelected:
+                                (value) =>
+                                    setState(() => _prioridadCarga = value),
+                          ),
+                          const SizedBox(height: AppSpacing.sm),
+                          Text(
+                            'Para prioridad media o alta es recomendable ofrecer un bono. Si el bono es 0, la carga queda en prioridad baja.',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: AppColors.graphite300),
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          PremiumTextField(
+                            controller: _incentivoPrioridadController,
+                            label: 'Bono por prioridad COP',
+                            hint: '0, 15000, 20000...',
+                            icon: Icons.trending_up_rounded,
+                            keyboardType: TextInputType.number,
+                            validator: _optionalNonNegativeMoney,
                           ),
                           const SizedBox(height: AppSpacing.md),
                           PremiumTextField(
@@ -565,9 +676,9 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
     };
   }
 
-  String? Function(String?) _positiveInt(String message) {
+  String? Function(String?) _positiveNumber(String message) {
     return (value) {
-      final parsed = int.tryParse(value?.trim() ?? '');
+      final parsed = double.tryParse((value ?? '').trim().replaceAll(',', '.'));
       if (parsed == null || parsed <= 0) return message;
       return null;
     };
@@ -577,6 +688,57 @@ class _CrearOportunidadScreenState extends State<CrearOportunidadScreen> {
     final parsed = double.tryParse((value ?? '').replaceAll(',', ''));
     if (parsed == null || parsed <= 0) return 'Ingresa un precio válido';
     return null;
+  }
+
+  String? _optionalNonNegativeMoney(String? value) {
+    final raw = (value ?? '').trim();
+    if (raw.isEmpty) return null;
+    final parsed = double.tryParse(raw.replaceAll(',', ''));
+    if (parsed == null || parsed < 0) return 'Ingresa un bono válido';
+    return null;
+  }
+}
+
+class _ChoiceGroup extends StatelessWidget {
+  final String title;
+  final Map<String, String> values;
+  final String selected;
+  final ValueChanged<String> onSelected;
+
+  const _ChoiceGroup({
+    required this.title,
+    required this.values,
+    required this.selected,
+    required this.onSelected,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          title,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: AppColors.graphite200,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: AppSpacing.xs),
+        Wrap(
+          spacing: AppSpacing.xs,
+          runSpacing: AppSpacing.xs,
+          children:
+              values.entries.map((entry) {
+                return ChoiceChip(
+                  label: Text(entry.value),
+                  selected: selected == entry.key,
+                  onSelected: (_) => onSelected(entry.key),
+                );
+              }).toList(),
+        ),
+      ],
+    );
   }
 }
 

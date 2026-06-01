@@ -8,6 +8,7 @@ import '../offline/sync_engine.dart';
 import '../observability/operational_logger.dart';
 import '../services/location_service.dart';
 import '../services/realtime_service.dart';
+import '../services/simulation_state_cache.dart';
 
 enum SimulationStatus {
   idle,
@@ -82,9 +83,14 @@ class SimulationRouteController {
     _speedKmh = speedKmh;
     _totalMeters = _routeLengthMeters(_routePoints);
     _status = SimulationStatus.running;
+    _ensureTicker();
+    await _emitCurrentPosition();
+  }
+
+  void _ensureTicker() {
+    if (_status != SimulationStatus.running) return;
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
-    await _emitCurrentPosition();
   }
 
   void stopWithReason(String reason) {
@@ -97,15 +103,68 @@ class SimulationRouteController {
       'simulation_trip_stopped',
       fields: {'reason': reason, 'oportunidadId': oportunidadId},
     );
+    unawaited(
+      _reportOperationalStatus(
+        status: 'stopped',
+        eventType: 'stopped',
+        reason: reason,
+      ),
+    );
     _publishSnapshot();
   }
 
   void resume() {
     if (_status == SimulationStatus.completed) return;
-    _status = SyncEngine.instance.simulationOfflineOverride
-        ? SimulationStatus.signalLost
-        : SimulationStatus.running;
+    _status =
+        SyncEngine.instance.simulationOfflineOverride
+            ? SimulationStatus.signalLost
+            : SimulationStatus.running;
     _stopReason = null;
+    _ensureTicker();
+    unawaited(
+      _reportOperationalStatus(
+        status: 'active',
+        eventType: 'signal_recovered',
+        reason: 'Ruta reanudada',
+      ),
+    );
+    _publishSnapshot();
+  }
+
+  SimulationPersistedState exportState() {
+    return SimulationPersistedState(
+      traveledMeters: _traveledMeters,
+      speedKmh: _speedKmh,
+      status: _status,
+      stopReason: _stopReason,
+      stopsMade: _stopsMade,
+      alertsCreated: _alertsCreated,
+      deviations: _deviations,
+      savedAt: DateTime.now().toUtc(),
+    );
+  }
+
+  Future<void> restoreState(SimulationPersistedState state) async {
+    if (_routePoints.length < 2) {
+      throw StateError('La simulación requiere una ruta con geometría real.');
+    }
+
+    _traveledMeters = state.traveledMeters.clamp(0, double.infinity);
+    _speedKmh = state.speedKmh;
+    _status = state.status;
+    _stopReason = state.stopReason;
+    _stopsMade = state.stopsMade;
+    _alertsCreated = state.alertsCreated;
+    _deviations = state.deviations;
+    _totalMeters = _routeLengthMeters(_routePoints);
+    _traveledMeters = _traveledMeters.clamp(0, _totalMeters);
+
+    _timer?.cancel();
+    if (_status == SimulationStatus.running) {
+      _ensureTicker();
+    }
+
+    await _emitCurrentPosition();
     _publishSnapshot();
   }
 
@@ -114,8 +173,13 @@ class SimulationRouteController {
     _publishSnapshot();
   }
 
-  void simulateSignalLoss() {
+  Future<void> simulateSignalLoss() async {
     if (_status == SimulationStatus.completed) return;
+    await _reportOperationalStatus(
+      status: 'offline',
+      eventType: 'signal_lost',
+      reason: 'El camionero se quedó sin señal',
+    );
     SyncEngine.instance.setSimulationOfflineOverride(true);
     RealtimeService.instance.disconnect();
     _status = SimulationStatus.signalLost;
@@ -131,24 +195,82 @@ class SimulationRouteController {
     await SyncEngine.instance.syncNow(reason: 'simulation_signal_recovered');
     _synchronizing = false;
     _status = SimulationStatus.running;
+    _ensureTicker();
+    await _reportOperationalStatus(
+      status: 'active',
+      eventType: 'signal_recovered',
+      reason: 'Señal recuperada',
+    );
     _publishSnapshot();
+  }
+
+  Future<void> _reportOperationalStatus({
+    required String status,
+    required String eventType,
+    String? reason,
+  }) async {
+    if (_routePoints.isEmpty) return;
+    final position = _positionAt(_traveledMeters);
+    await locationService.reportOperationalStatus(
+      position: Position(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        timestamp: DateTime.now().toUtc(),
+        accuracy: 5,
+        altitude: 0,
+        heading: 0,
+        speed: _speedKmh / 3.6,
+        speedAccuracy: 0,
+        altitudeAccuracy: 0,
+        headingAccuracy: 0,
+      ),
+      status: status,
+      eventType: eventType,
+      reason: reason,
+      oportunidadId: oportunidadId,
+    );
   }
 
   Future<void> deviateToward(LatLng target) async {
     if (_status == SimulationStatus.completed) return;
     _deviations += 1;
-    _status = SimulationStatus.deviating;
-    await _emitPosition(target);
-    _publishSnapshot(positionOverride: target);
+    final current = _positionAt(_traveledMeters);
+    _routePoints = List.unmodifiable([
+      current,
+      target,
+      ..._remainingRoute().skip(1),
+    ]);
+    _traveledMeters = 0;
+    _totalMeters = _routeLengthMeters(_routePoints);
+    _status = SimulationStatus.running;
+    _publishSnapshot(positionOverride: current);
   }
 
   void replaceRoute(List<LatLng> points) {
     if (points.length < 2) return;
-    _routePoints = List.unmodifiable(points);
+    final current = _positionAt(_traveledMeters);
+    _routePoints = List.unmodifiable([current, ...points.skip(1)]);
     _traveledMeters = 0;
-    _totalMeters = _routeLengthMeters(points);
+    _totalMeters = _routeLengthMeters(_routePoints);
     _status = SimulationStatus.running;
-    _publishSnapshot(positionOverride: points.first);
+    _publishSnapshot(positionOverride: current);
+  }
+
+  void finishNearDestination({double remainingKm = 1.5}) {
+    if (_status == SimulationStatus.completed) return;
+    final targetMeters = math.max(0.0, _totalMeters - (remainingKm * 1000));
+    _traveledMeters = math.max(_traveledMeters, targetMeters);
+    _status = SimulationStatus.running;
+    _publishSnapshot();
+  }
+
+  Future<void> completeTrip() async {
+    if (_status == SimulationStatus.completed) return;
+    _traveledMeters = _totalMeters;
+    _status = SimulationStatus.completed;
+    _timer?.cancel();
+    await _emitCurrentPosition();
+    _publishSnapshot();
   }
 
   Future<void> _tick() async {
@@ -218,6 +340,23 @@ class SimulationRouteController {
     return _routePoints.last;
   }
 
+  List<LatLng> _remainingRoute() {
+    final current = _positionAt(_traveledMeters);
+    var remaining = _traveledMeters;
+    for (var i = 0; i < _routePoints.length - 1; i++) {
+      final segmentMeters = _distance.as(
+        LengthUnit.Meter,
+        _routePoints[i],
+        _routePoints[i + 1],
+      );
+      if (remaining <= segmentMeters) {
+        return [current, ..._routePoints.skip(i + 1)];
+      }
+      remaining -= segmentMeters;
+    }
+    return [current, _routePoints.last];
+  }
+
   double _routeLengthMeters(List<LatLng> points) {
     var meters = 0.0;
     for (var i = 0; i < points.length - 1; i++) {
@@ -230,7 +369,9 @@ class SimulationRouteController {
     if (_snapshots.isClosed || _routePoints.isEmpty) return;
     final remainingMeters = math.max(0.0, _totalMeters - _traveledMeters);
     final secondsRemaining =
-        _speedKmh <= 0 ? 0 : (remainingMeters / ((_speedKmh * 1000) / 3600)).round();
+        _speedKmh <= 0
+            ? 0
+            : (remainingMeters / ((_speedKmh * 1000) / 3600)).round();
     _snapshots.add(
       SimulationSnapshot(
         status: _status,

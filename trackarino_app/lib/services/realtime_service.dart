@@ -29,6 +29,8 @@ class RealtimeTrackingUpdate {
   final int? ageMs;
   final bool isStale;
   final bool isOffline;
+  final String? operationalEventType;
+  final String? operationalEventReason;
 
   RealtimeTrackingUpdate({
     required this.eventId,
@@ -43,6 +45,8 @@ class RealtimeTrackingUpdate {
     required this.ageMs,
     required this.isStale,
     required this.isOffline,
+    this.operationalEventType,
+    this.operationalEventReason,
   });
 
   static RealtimeTrackingUpdate? fromJson(dynamic payload) {
@@ -51,8 +55,15 @@ class RealtimeTrackingUpdate {
     final camioneroId = payload['camioneroId']?.toString();
     final coords = payload['coords'];
     final coordsMap = coords is Map ? coords : null;
-    final lat = (coordsMap?['lat'] as num?)?.toDouble();
-    final lng = (coordsMap?['lng'] as num?)?.toDouble();
+    var lat = (coordsMap?['lat'] as num?)?.toDouble();
+    var lng = (coordsMap?['lng'] as num?)?.toDouble();
+    if (lat == null || lng == null) {
+      final coordinates = payload['coordinates'];
+      if (coordinates is List && coordinates.length >= 2) {
+        lng = (coordinates[0] as num?)?.toDouble();
+        lat = (coordinates[1] as num?)?.toDouble();
+      }
+    }
     final timestamp = DateTime.tryParse(payload['timestamp']?.toString() ?? '');
     final serverReceivedAt = DateTime.tryParse(
       payload['serverReceivedAt']?.toString() ?? '',
@@ -68,6 +79,9 @@ class RealtimeTrackingUpdate {
 
     final meta = payload['meta'];
     final metaMap = meta is Map ? meta : null;
+    final operationalEvent = payload['operationalEvent'];
+    final operationalEventMap =
+        operationalEvent is Map ? operationalEvent : null;
 
     return RealtimeTrackingUpdate(
       eventId: (payload['eventId'] ?? '').toString(),
@@ -82,6 +96,8 @@ class RealtimeTrackingUpdate {
       ageMs: (metaMap?['ageMs'] as num?)?.toInt(),
       isStale: metaMap?['isStale'] == true,
       isOffline: metaMap?['isOffline'] == true,
+      operationalEventType: operationalEventMap?['type']?.toString(),
+      operationalEventReason: operationalEventMap?['reason']?.toString(),
     );
   }
 }
@@ -97,7 +113,9 @@ class RealtimeAlertUpdate {
     final eventId = (payload['eventId'] ?? payload['_id'] ?? '').toString();
 
     try {
-      final alert = AlertaSeguridad.fromJson(Map<String, dynamic>.from(payload));
+      final alert = AlertaSeguridad.fromJson(
+        Map<String, dynamic>.from(payload),
+      );
       return RealtimeAlertUpdate(eventId: eventId, alert: alert);
     } catch (_) {
       final tipo = payload['tipo']?.toString();
@@ -385,8 +403,7 @@ class RealtimeService with WidgetsBindingObserver {
       try {
         final update = RealtimeAlertUpdate.fromJson(payload);
         if (update == null || update.alert == null) return;
-        if (update.eventId.isNotEmpty &&
-            update.eventId == _lastAlertEventId) {
+        if (update.eventId.isNotEmpty && update.eventId == _lastAlertEventId) {
           return;
         }
         _lastAlertEventId = update.eventId;

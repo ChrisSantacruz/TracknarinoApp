@@ -265,7 +265,9 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Oferta enviada al contratista. Esperando respuesta.'),
+            content: Text(
+              'Oferta enviada al contratista. Esperando respuesta.',
+            ),
           ),
         );
         await _cargarOportunidades();
@@ -349,32 +351,28 @@ class _OportunidadesScreenState extends State<OportunidadesScreen> {
     );
     if (decision?.accept != true || !mounted) return;
 
-    final user = context.read<AuthService>().currentUser;
-    final simulationTrip = Oportunidad.fromJson({
-      ...oportunidad.toJson(),
-      '_id': oportunidad.id,
-      'estado': 'asignada',
-      'fecha': oportunidad.fecha.toIso8601String(),
-      'camioneroAsignado': user?.id,
-      'contratista': oportunidad.contratistaInfo == null
-          ? oportunidad.contratista
-          : {
-              '_id': oportunidad.contratistaInfo!.id,
-              'nombre': oportunidad.contratistaInfo!.nombre,
-              'correo': oportunidad.contratistaInfo!.correo,
-              'telefono': oportunidad.contratistaInfo!.telefono,
-              'empresa': oportunidad.contratistaInfo!.empresa,
-            },
-    });
+    Oportunidad simulationTrip;
+    try {
+      simulationTrip = await OportunidadService.aceptarOportunidad(
+        oportunidad.id!,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Carga aceptada en simulación. El cliente/contratista ya puede verla en flota.',
+          ),
+        ),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo aceptar la simulación: $error')),
+      );
+      return;
+    }
 
     context.read<TripStore>().setSimulationActiveTrip(simulationTrip);
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text(
-          'Instancia de simulación creada. La carga sigue visible para usuarios reales.',
-        ),
-      ),
-    );
 
     await Navigator.push(
       context,
@@ -447,6 +445,11 @@ class _OpportunityCard extends StatelessWidget {
                 label: _money(oportunidad.precio),
                 icon: Icons.payments_outlined,
               ),
+              if (oportunidad.incentivoPrioridad > 0)
+                _MetricChip(
+                  label: 'Bono ${_money(oportunidad.incentivoPrioridad)}',
+                  icon: Icons.trending_up_rounded,
+                ),
               _MetricChip(
                 label: _distance(oportunidad),
                 icon: Icons.route_outlined,
@@ -518,73 +521,88 @@ class _OpportunityDetailsSheet extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-              const PremiumSheetHandle(),
-              const SizedBox(height: AppSpacing.lg),
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      oportunidad.titulo,
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w900,
+                  const PremiumSheetHandle(),
+                  const SizedBox(height: AppSpacing.lg),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          oportunidad.titulo,
+                          style: Theme.of(
+                            context,
+                          ).textTheme.titleLarge?.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w900,
+                          ),
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => Navigator.of(context).pop(),
+                        icon: const Icon(
+                          Icons.close_rounded,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  _RouteLine(
+                    origen: oportunidad.origen,
+                    destino: oportunidad.destino,
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  Wrap(
+                    spacing: AppSpacing.xs,
+                    runSpacing: AppSpacing.xs,
+                    children: [
+                      _MetricChip(
+                        label: _money(oportunidad.precio),
+                        icon: Icons.payments_outlined,
+                      ),
+                      if (oportunidad.incentivoPrioridad > 0)
+                        _MetricChip(
+                          label:
+                              'Bono ${_money(oportunidad.incentivoPrioridad)}',
+                          icon: Icons.trending_up_rounded,
+                        ),
+                      _MetricChip(
+                        label: _distance(oportunidad),
+                        icon: Icons.route_outlined,
+                      ),
+                      _MetricChip(
+                        label: _duration(oportunidad),
+                        icon: Icons.timer_outlined,
+                      ),
+                      if (oportunidad.tipoCarga != null)
+                        _MetricChip(
+                          label: oportunidad.tipoCarga!,
+                          icon: Icons.inventory_2_outlined,
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  _PublisherCard(oportunidad: oportunidad),
+                  if ((oportunidad.descripcion ?? '').isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.md),
+                    Text(
+                      oportunidad.descripcion!,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: AppColors.graphite300,
                       ),
                     ),
+                  ],
+                  const SizedBox(height: AppSpacing.lg),
+                  _NegotiationPanel(
+                    oportunidad: oportunidad,
+                    onUpdated: onUpdated,
                   ),
-                  IconButton(
-                    onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.close_rounded, color: Colors.white),
+                  const SizedBox(height: AppSpacing.lg),
+                  PremiumPrimaryButton(
+                    label: 'Aceptar carga',
+                    icon: Icons.check_rounded,
+                    onPressed:
+                        oportunidad.estado == 'disponible' ? onAccept : null,
                   ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.md),
-              _RouteLine(
-                origen: oportunidad.origen,
-                destino: oportunidad.destino,
-              ),
-              const SizedBox(height: AppSpacing.md),
-              Wrap(
-                spacing: AppSpacing.xs,
-                runSpacing: AppSpacing.xs,
-                children: [
-                  _MetricChip(
-                    label: _money(oportunidad.precio),
-                    icon: Icons.payments_outlined,
-                  ),
-                  _MetricChip(
-                    label: _distance(oportunidad),
-                    icon: Icons.route_outlined,
-                  ),
-                  _MetricChip(
-                    label: _duration(oportunidad),
-                    icon: Icons.timer_outlined,
-                  ),
-                  if (oportunidad.tipoCarga != null)
-                    _MetricChip(
-                      label: oportunidad.tipoCarga!,
-                      icon: Icons.inventory_2_outlined,
-                    ),
-                ],
-              ),
-              const SizedBox(height: AppSpacing.md),
-              _PublisherCard(oportunidad: oportunidad),
-              if ((oportunidad.descripcion ?? '').isNotEmpty) ...[
-                const SizedBox(height: AppSpacing.md),
-                Text(
-                  oportunidad.descripcion!,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: AppColors.graphite300,
-                  ),
-                ),
-              ],
-              const SizedBox(height: AppSpacing.lg),
-              _NegotiationPanel(oportunidad: oportunidad, onUpdated: onUpdated),
-              const SizedBox(height: AppSpacing.lg),
-              PremiumPrimaryButton(
-                label: 'Aceptar carga',
-                icon: Icons.check_rounded,
-                onPressed: oportunidad.estado == 'disponible' ? onAccept : null,
-              ),
                 ],
               ),
             ),
@@ -622,7 +640,9 @@ class _AcceptTripSheetState extends State<_AcceptTripSheet> {
   }
 
   void _submitOffer() {
-    final price = double.tryParse(_priceController.text.trim().replaceAll(',', ''));
+    final price = double.tryParse(
+      _priceController.text.trim().replaceAll(',', ''),
+    );
     if (price == null || price <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Ingresa una oferta válida en COP.')),
@@ -689,16 +709,19 @@ class _AcceptTripSheetState extends State<_AcceptTripSheet> {
             const SizedBox(height: AppSpacing.xs),
             Text(
               'Puedes aceptar el valor actual o proponer uno nuevo (estilo inDrive).',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: AppColors.graphite300,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppColors.graphite300),
             ),
             const SizedBox(height: AppSpacing.lg),
             Row(
               children: [
                 Expanded(
                   child: OutlinedButton(
-                    onPressed: () => Navigator.of(context).pop(_AcceptTripDecision.cancel()),
+                    onPressed:
+                        () => Navigator.of(
+                          context,
+                        ).pop(_AcceptTripDecision.cancel()),
                     child: const Text('Cancelar'),
                   ),
                 ),
@@ -712,7 +735,10 @@ class _AcceptTripSheetState extends State<_AcceptTripSheet> {
                 const SizedBox(width: AppSpacing.sm),
                 Expanded(
                   child: FilledButton(
-                    onPressed: () => Navigator.of(context).pop(_AcceptTripDecision.accept()),
+                    onPressed:
+                        () => Navigator.of(
+                          context,
+                        ).pop(_AcceptTripDecision.accept()),
                     child: const Text('Aceptar'),
                   ),
                 ),
@@ -731,8 +757,10 @@ class _AcceptTripDecision {
 
   const _AcceptTripDecision._({required this.accept, this.offerPrice});
 
-  factory _AcceptTripDecision.accept() => const _AcceptTripDecision._(accept: true);
-  factory _AcceptTripDecision.cancel() => const _AcceptTripDecision._(accept: false);
+  factory _AcceptTripDecision.accept() =>
+      const _AcceptTripDecision._(accept: true);
+  factory _AcceptTripDecision.cancel() =>
+      const _AcceptTripDecision._(accept: false);
   factory _AcceptTripDecision.offer(double price) =>
       _AcceptTripDecision._(accept: false, offerPrice: price);
 }

@@ -238,33 +238,44 @@ class PremiumTextField extends StatelessWidget {
     final textColor = AppColors.graphite900;
     final iconColor = AppColors.graphite700;
 
-    return TextFormField(
-      controller: controller,
-      obscureText: obscureText,
-      maxLines: maxLines,
-      keyboardType: keyboardType,
-      autofillHints: autofillHints,
-      validator: validator,
-      onTap: onTap,
-      readOnly: readOnly,
-      cursorColor: textColor,
-      style: const TextStyle(color: AppColors.graphite900, fontWeight: FontWeight.w800),
-      decoration: InputDecoration(
-        filled: true,
-        fillColor: Colors.white.withValues(alpha: 0.92),
-        labelText: label,
-        hintText: hint,
-        labelStyle: const TextStyle(
-          color: AppColors.graphite800,
-          fontWeight: FontWeight.w700,
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: AppColors.graphite200,
+            fontWeight: FontWeight.w800,
+          ),
         ),
-        hintStyle: const TextStyle(
-          color: AppColors.graphite700,
-          fontWeight: FontWeight.w600,
+        const SizedBox(height: 6),
+        TextFormField(
+          controller: controller,
+          obscureText: obscureText,
+          maxLines: maxLines,
+          keyboardType: keyboardType,
+          autofillHints: autofillHints,
+          validator: validator,
+          onTap: onTap,
+          readOnly: readOnly,
+          cursorColor: textColor,
+          style: const TextStyle(
+            color: AppColors.graphite900,
+            fontWeight: FontWeight.w800,
+          ),
+          decoration: InputDecoration(
+            filled: true,
+            fillColor: Colors.white.withValues(alpha: 0.92),
+            hintText: hint ?? label,
+            hintStyle: const TextStyle(
+              color: AppColors.graphite700,
+              fontWeight: FontWeight.w600,
+            ),
+            prefixIcon: Icon(icon, color: iconColor),
+            suffixIcon: suffixIcon,
+          ),
         ),
-        prefixIcon: Icon(icon, color: iconColor),
-        suffixIcon: suffixIcon,
-      ),
+      ],
     );
   }
 }

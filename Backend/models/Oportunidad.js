@@ -72,6 +72,48 @@ const oportunidadSchema = new mongoose.Schema({
 
   tipoCarga: { type: String, trim: true },
 
+  vehiculoPreferido: {
+    type: String,
+    trim: true,
+    enum: [
+      'camion_liviano_npr_nqr',
+      'camion_mediano_frr',
+      'camion_grande_ftr_fvr_gh',
+      'tractocamion',
+      'camion_refrigerado',
+      'camion_plataforma',
+      'volqueta',
+      'camioneta_carga',
+      'otro',
+    ],
+  },
+
+  capacidadRequerida: { type: Number },
+
+  unidadCapacidad: {
+    type: String,
+    enum: ['toneladas', 'kg'],
+    default: 'toneladas',
+  },
+
+  metodoPagoCarga: {
+    type: String,
+    trim: true,
+    enum: ['transferencia', 'efectivo', 'nequi', 'daviplata', 'mixto'],
+  },
+
+  prioridad: {
+    type: String,
+    enum: ['baja', 'media', 'alta'],
+    default: 'baja',
+  },
+
+  incentivoPrioridad: {
+    type: Number,
+    default: 0,
+    min: 0,
+  },
+
   requisitosEspeciales: { type: String, trim: true },
 
   estado: {
@@ -208,6 +250,19 @@ oportunidadSchema.pre('validate', function setCompatibilityFields(next) {
 
     this.direccionDescargue = this.destination.address || this.direccionDescargue;
 
+  }
+
+  if (this.capacidadRequerida == null && this.pesoCarga != null) {
+    this.capacidadRequerida = this.pesoCarga;
+  }
+
+  if (this.incentivoPrioridad > 0 && (!this.prioridad || this.prioridad === 'baja')) {
+    this.prioridad = this.incentivoPrioridad >= 20000 ? 'alta' : 'media';
+  }
+
+  if (!this.incentivoPrioridad || this.incentivoPrioridad <= 0) {
+    this.incentivoPrioridad = 0;
+    this.prioridad = 'baja';
   }
 
 

@@ -26,6 +26,8 @@ class LocationService extends ChangeNotifier {
   int _sendSequence = 0;
 
   static const Duration _minSendInterval = Duration(seconds: 10);
+  static const Duration _simulationSendInterval = Duration(milliseconds: 900);
+  static const double _simulationMinMovementMeters = 0.5;
   static const double _maxAccuracyMeters = 500;
 
   Stream<Position> get positionStream => _positionController.stream;
@@ -219,6 +221,25 @@ class LocationService extends ChangeNotifier {
   }
 
   bool _shouldThrottleSend(Position position) {
+    if (_simulationMode) {
+      final now = DateTime.now();
+      if (_lastServerSendAt != null &&
+          now.difference(_lastServerSendAt!) < _simulationSendInterval) {
+        return true;
+      }
+
+      if (_lastSentPosition != null) {
+        final distance = Geolocator.distanceBetween(
+          _lastSentPosition!.latitude,
+          _lastSentPosition!.longitude,
+          position.latitude,
+          position.longitude,
+        );
+        if (distance < _simulationMinMovementMeters) return true;
+      }
+      return false;
+    }
+
     final now = DateTime.now();
     if (_lastServerSendAt != null &&
         now.difference(_lastServerSendAt!) < _minSendInterval) {
@@ -286,6 +307,45 @@ class LocationService extends ChangeNotifier {
         error: e,
       );
     }
+  }
+
+  Future<void> reportOperationalStatus({
+    required Position position,
+    required String status,
+    required String eventType,
+    String? reason,
+    String? oportunidadId,
+  }) async {
+    if (_camioneroId == null) return;
+
+    final timestamp = DateTime.now().toUtc();
+    final data = {
+      'lat': position.latitude,
+      'lng': position.longitude,
+      'latitud': position.latitude,
+      'longitud': position.longitude,
+      'speed': position.speed,
+      'accuracy': position.accuracy,
+      'heading': _heading,
+      'timestamp': timestamp.toIso8601String(),
+      'camioneroId': _camioneroId,
+      'source': 'gps',
+      if (oportunidadId != null) 'oportunidadId': oportunidadId,
+      'trackingStatusOverride': status,
+      'operationalEvent': {
+        'type': eventType,
+        if (reason != null && reason.trim().isNotEmpty) 'reason': reason.trim(),
+        'reportedAt': timestamp.toIso8601String(),
+      },
+      'clientEventId':
+          '${_camioneroId}_${eventType}_${timestamp.millisecondsSinceEpoch}',
+      'sequence': _sendSequence + 1,
+    };
+
+    await ApiService.post('${ApiConfig.ubicacion}/actualizar', data);
+    _sendSequence += 1;
+    _lastServerSendAt = DateTime.now();
+    _lastSentPosition = position;
   }
 
   Future<Ubicacion?> obtenerUltimaPosicionCamionero(String idCamionero) async {

@@ -26,7 +26,9 @@ import '../../widgets/operational/operational_status_chip.dart';
 import '../../widgets/operational/realtime_connection_chip.dart';
 
 class SeguimientoScreen extends StatefulWidget {
-  const SeguimientoScreen({super.key});
+  final VoidCallback? onTripCompleted;
+
+  const SeguimientoScreen({super.key, this.onTripCompleted});
 
   @override
   State<SeguimientoScreen> createState() => _SeguimientoScreenState();
@@ -34,8 +36,7 @@ class SeguimientoScreen extends StatefulWidget {
 
 class _SeguimientoScreenState extends State<SeguimientoScreen> {
   static const Duration _fallbackPollInterval = Duration(seconds: 10);
-  static const Duration _socketHealthyPollInterval = Duration(seconds: 60);
-  static const double _minimumMarkerMoveMeters = 8;
+  static const Duration _socketHealthyPollInterval = Duration(seconds: 12);
   static const latlong.LatLng _defaultCenter = latlong.LatLng(1.2136, -77.2811);
 
   final MapController _mapController = MapController();
@@ -44,6 +45,7 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
   final OperationalMapDiagnostics _mapDiagnostics = OperationalMapDiagnostics();
   final Map<String, Map<String, dynamic>> _camioneros = {};
   final Set<String> _seenRealtimeEvents = {};
+  final Set<String> _handledDeliveryPrompts = {};
   StreamSubscription<RealtimeConnectionStatus>? _connectionSubscription;
   StreamSubscription<RealtimeTrackingUpdate>? _trackingSubscription;
   StreamSubscription<RealtimeTripUpdate>? _tripSubscription;
@@ -59,7 +61,7 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
   int _offlineCount = 0;
   int _noLocationCount = 0;
   int _activeTripCount = 0;
-  final Set<String> _visibleStates = {'active', 'stale', 'offline'};
+  final Set<String> _visibleStates = {'active', 'stale', 'stopped', 'offline'};
   bool _activeTripsOnly = false;
   bool _showFleetDensity = false;
   bool _showTruckerPlaces = true;
@@ -102,9 +104,143 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
     _trackingSubscription = _realtime.trackingUpdates.listen(
       _applyRealtimeTrackingUpdate,
     );
-    _tripSubscription = _realtime.tripUpdates.listen(
-      (_) => _loadFleet(initial: false),
+    _tripSubscription = _realtime.tripUpdates.listen(_handleTripUpdate);
+  }
+
+  Future<void> _handleTripUpdate(RealtimeTripUpdate update) async {
+    await _loadFleet(initial: false);
+    if (!mounted) return;
+    if (update.estado != 'entregada') return;
+
+    final promptKey =
+        update.eventId.isNotEmpty
+            ? update.eventId
+            : 'entregada:${update.oportunidadId}';
+    if (_handledDeliveryPrompts.contains(promptKey)) return;
+    _handledDeliveryPrompts.add(promptKey);
+
+    final camioneroId = update.camioneroId;
+    if (camioneroId == null || camioneroId.isEmpty) return;
+
+    final camionero = _camioneros[camioneroId];
+    await _promptEntregaYCalificacion(
+      camioneroId: camioneroId,
+      tripId: update.oportunidadId,
+      nombreCamionero: (camionero?['nombre'] ?? 'Camionero').toString(),
+      origen: (camionero?['origen'] ?? 'Origen').toString(),
+      destino: (camionero?['destino'] ?? 'Destino').toString(),
+      carga: (camionero?['carga'] ?? 'Carga').toString(),
     );
+  }
+
+  Future<void> _promptEntregaYCalificacion({
+    required String camioneroId,
+    required String tripId,
+    required String nombreCamionero,
+    required String origen,
+    required String destino,
+    required String carga,
+  }) async {
+    if (!mounted) return;
+
+    final calificar = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder:
+          (dialogContext) => AlertDialog(
+            backgroundColor: AppColors.graphite950,
+            surfaceTintColor: Colors.transparent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(28),
+              side: BorderSide(
+                color: AppColors.emerald400.withValues(alpha: 0.26),
+              ),
+            ),
+            title: const Text(
+              'Carga entregada',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '$nombreCamionero confirmó la llegada.',
+                  style: const TextStyle(color: AppColors.graphite300),
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  carga,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                Text(
+                  '$origen → $destino',
+                  style: const TextStyle(color: AppColors.graphite300),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(dialogContext).pop(false),
+                child: const Text('Después'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.emerald500,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () => Navigator.of(dialogContext).pop(true),
+                child: const Text('Calificar ahora'),
+              ),
+            ],
+          ),
+    );
+
+    if (!mounted) return;
+    widget.onTripCompleted?.call();
+
+    if (calificar != true) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Viaje marcado como entregado.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      return;
+    }
+
+    final ratingPayload = await _solicitarCalificacion(nombreCamionero);
+    if (ratingPayload == null) return;
+
+    try {
+      await CalificacionService.crearCalificacion(
+        usuarioId: camioneroId,
+        tipoServicio: 'camionero',
+        calificacion: ratingPayload.$1,
+        comentario: ratingPayload.$2,
+      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Calificación registrada correctamente.'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo guardar la calificación: $e'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+    }
   }
 
   void _startPolling({required bool socketHealthy}) {
@@ -241,6 +377,7 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
 
   String _mapTrackingStatus(FleetTrackingItem item) {
     if (item.isOffline) return 'offline';
+    if (item.trackingStatus == 'stopped') return 'stopped';
     if (item.isStale) return 'stale';
     if (item.hasLocation && item.coordinatesValid) return 'active';
     return item.trackingStatus;
@@ -263,31 +400,14 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
     }
 
     final updatedPoint = latlong.LatLng(update.lat, update.lng);
-    final previousPoint = camionero['ubicacion'] as latlong.LatLng;
     final nextStatus =
-        update.isOffline
+        update.trackingStatus == 'stopped'
+            ? 'stopped'
+            : update.isOffline
             ? 'offline'
             : update.isStale
             ? 'stale'
             : update.trackingStatus;
-    final movedMeters = const latlong.Distance().as(
-      latlong.LengthUnit.Meter,
-      previousPoint,
-      updatedPoint,
-    );
-    final headingChanged =
-        update.heading != null &&
-        ((update.heading! - (camionero['rumbo'] as double)).abs() >= 8);
-    final statusChanged = camionero['estado'] != nextStatus;
-    final selected = _camioneroSeleccionadoId == update.camioneroId;
-
-    if (!selected &&
-        !statusChanged &&
-        !headingChanged &&
-        movedMeters < _minimumMarkerMoveMeters) {
-      camionero['ultimaActualizacion'] = update.timestamp;
-      return;
-    }
 
     setState(() {
       camionero['ubicacion'] = updatedPoint;
@@ -296,6 +416,8 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
       camionero['isStale'] = update.isStale;
       camionero['isOffline'] = update.isOffline;
       camionero['ultimaActualizacion'] = update.timestamp;
+      camionero['operationalEventType'] = update.operationalEventType;
+      camionero['operationalEventReason'] = update.operationalEventReason;
       _emptyMessage = '';
       _recalculateVisibleFleetCounts();
     });
@@ -354,6 +476,88 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
     final id = _camioneroSeleccionadoId;
     if (id == null) return null;
     return _camioneros[id];
+  }
+
+  List<_OperationalNotification> get _operationalNotifications {
+    final notifications = <_OperationalNotification>[];
+    final now = DateTime.now();
+
+    for (final camionero in _camioneros.values) {
+      final status = camionero['estado'] as String;
+      final updatedAt = camionero['ultimaActualizacion'] as DateTime;
+      final hasActiveTrip = camionero['hasActiveTrip'] as bool;
+      final route = '${camionero['origen']} → ${camionero['destino']}';
+      final name = camionero['nombre'] as String;
+
+      if (status == 'offline') {
+        notifications.add(
+          _OperationalNotification(
+            title: '$name quedó sin señal',
+            message:
+                hasActiveTrip
+                    ? 'Ruta $route. Último punto ${_formatTimeDifference(updatedAt).toLowerCase()}.'
+                    : 'Sin viaje activo. Último punto ${_formatTimeDifference(updatedAt).toLowerCase()}.',
+            color: AppColors.statusOffline,
+            icon: Icons.signal_wifi_off_rounded,
+            camioneroId: camionero['id'] as String,
+            timestamp: updatedAt,
+          ),
+        );
+        continue;
+      }
+
+      if (status == 'stopped') {
+        final reason = camionero['operationalEventReason'] as String?;
+        notifications.add(
+          _OperationalNotification(
+            title: '$name se detuvo',
+            message:
+                hasActiveTrip
+                    ? 'Ruta $route${reason == null || reason.isEmpty ? '' : ' · $reason'}.'
+                    : reason ?? 'Detención reportada por el camionero.',
+            color: AppColors.alertWarning,
+            icon: Icons.pause_circle_outline_rounded,
+            camioneroId: camionero['id'] as String,
+            timestamp: updatedAt,
+          ),
+        );
+        continue;
+      }
+
+      if (status == 'stale') {
+        notifications.add(
+          _OperationalNotification(
+            title: 'Señal antigua de $name',
+            message:
+                hasActiveTrip
+                    ? 'Ruta $route. El mapa conserva el último punto confirmado.'
+                    : 'El conductor no ha enviado ubicación reciente.',
+            color: AppColors.statusStale,
+            icon: Icons.schedule_rounded,
+            camioneroId: camionero['id'] as String,
+            timestamp: updatedAt,
+          ),
+        );
+        continue;
+      }
+
+      if (hasActiveTrip && now.difference(updatedAt).inMinutes >= 3) {
+        notifications.add(
+          _OperationalNotification(
+            title: 'Posible detención de $name',
+            message:
+                'Ruta $route. No hay movimiento confirmado en los últimos minutos.',
+            color: AppColors.statusSyncing,
+            icon: Icons.pause_circle_outline_rounded,
+            camioneroId: camionero['id'] as String,
+            timestamp: updatedAt,
+          ),
+        );
+      }
+    }
+
+    notifications.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    return notifications;
   }
 
   List<latlong.LatLng> _selectedRoutePoints(Map<String, dynamic>? camionero) {
@@ -527,9 +731,73 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
       context: context,
       builder:
           (dialogContext) => AlertDialog(
-            title: const Text('Finalizar viaje'),
-            content: Text(
-              'Se marcará como entregado el viaje activo de ${camionero['nombre']}. ¿Deseas continuar?',
+            backgroundColor: AppColors.graphite950,
+            surfaceTintColor: Colors.transparent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(28),
+              side: BorderSide(
+                color: AppColors.emerald400.withValues(alpha: 0.26),
+              ),
+            ),
+            icon: Container(
+              width: 58,
+              height: 58,
+              decoration: BoxDecoration(
+                color: AppColors.emerald400.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(
+                Icons.task_alt_rounded,
+                color: AppColors.emerald300,
+                size: 30,
+              ),
+            ),
+            title: const Text(
+              'Confirmar entrega',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  'Se cerrará el viaje activo de ${camionero['nombre']} y la carga pasará a entregada.',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(color: AppColors.graphite300),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Container(
+                  padding: const EdgeInsets.all(AppSpacing.md),
+                  decoration: BoxDecoration(
+                    color: Colors.white.withValues(alpha: 0.05),
+                    borderRadius: BorderRadius.circular(18),
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.08),
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        camionero['carga'] as String,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(
+                        '${camionero['origen']} → ${camionero['destino']}',
+                        style: const TextStyle(color: AppColors.graphite300),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
             ),
             actions: [
               TextButton(
@@ -537,8 +805,12 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
                 child: const Text('Cancelar'),
               ),
               FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.emerald500,
+                  foregroundColor: Colors.white,
+                ),
                 onPressed: () => Navigator.of(dialogContext).pop(true),
-                child: const Text('Finalizar'),
+                child: const Text('Finalizar viaje'),
               ),
             ],
           ),
@@ -569,13 +841,14 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
         ),
       );
       await _loadFleet(initial: false);
+      widget.onTripCompleted?.call();
       return;
     }
 
     try {
       await CalificacionService.crearCalificacion(
         usuarioId: camioneroId,
-        tipoServicio: 'carga',
+        tipoServicio: 'camionero',
         calificacion: ratingPayload.$1,
         comentario: ratingPayload.$2,
       );
@@ -597,9 +870,12 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
     }
 
     await _loadFleet(initial: false);
+    widget.onTripCompleted?.call();
   }
 
-  Future<(int, String?)?> _solicitarCalificacion(dynamic nombreCamionero) async {
+  Future<(int, String?)?> _solicitarCalificacion(
+    dynamic nombreCamionero,
+  ) async {
     int estrellas = 5;
     final comentarioController = TextEditingController();
 
@@ -615,14 +891,17 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('Califica el servicio de ${nombreCamionero ?? 'camionero'}'),
+                    Text(
+                      'Califica el servicio de ${nombreCamionero ?? 'camionero'}',
+                    ),
                     const SizedBox(height: AppSpacing.md),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: List.generate(5, (index) {
                         final value = index + 1;
                         return IconButton(
-                          onPressed: () => setDialogState(() => estrellas = value),
+                          onPressed:
+                              () => setDialogState(() => estrellas = value),
                           icon: Icon(
                             value <= estrellas ? Icons.star : Icons.star_border,
                             color: Colors.amber,
@@ -807,6 +1086,9 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
       final heading = camionero['rumbo'] as double;
 
       return Marker(
+        key: ValueKey(
+          'fleet-${camionero['id']}-${point.latitude.toStringAsFixed(5)}-${point.longitude.toStringAsFixed(5)}',
+        ),
         point: point,
         width: selected ? 46 : 42,
         height: selected ? 46 : 42,
@@ -911,18 +1193,24 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
 
   Widget _buildFleetSummaryCard() {
     return Material(
-      elevation: 8,
-      shadowColor: Colors.black.withValues(alpha: 0.18),
-      borderRadius: BorderRadius.circular(22),
-      color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
+      elevation: 10,
+      shadowColor: Colors.black.withValues(alpha: 0.22),
+      borderRadius: BorderRadius.circular(24),
+      color: Colors.transparent,
       child: Container(
-        width: 248,
+        width: 360,
         padding: const EdgeInsets.all(AppSpacing.md),
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(22),
-          border: Border.all(
-            color: Theme.of(context).dividerColor.withValues(alpha: 0.12),
-          ),
+          borderRadius: BorderRadius.circular(24),
+          color: AppColors.graphite950.withValues(alpha: 0.88),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.1)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.14),
+              blurRadius: 22,
+              offset: const Offset(0, 10),
+            ),
+          ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -933,8 +1221,10 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
                 Expanded(
                   child: Text(
                     'Flota operativa',
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w800,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: -0.2,
                     ),
                   ),
                 ),
@@ -951,13 +1241,17 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
               _fleetTotal == 0
                   ? 'Esperando sincronización'
                   : '$_fleetTotal vehículos vinculados',
-              style: Theme.of(context).textTheme.bodySmall,
+              style: Theme.of(
+                context,
+              ).textTheme.bodySmall?.copyWith(color: AppColors.graphite300),
             ),
             const SizedBox(height: AppSpacing.md),
             Row(
               children: [
                 _summaryMetric('Activos', _activeCount, AppColors.statusActive),
+                const SizedBox(width: AppSpacing.xs),
                 _summaryMetric('Antigua', _staleCount, AppColors.statusStale),
+                const SizedBox(width: AppSpacing.xs),
                 _summaryMetric(
                   'Sin señal',
                   _offlineCount,
@@ -966,10 +1260,21 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
               ],
             ),
             const SizedBox(height: AppSpacing.sm),
-            Text(
-              'Viajes activos: $_activeTripCount · Sin ubicación: $_noLocationCount',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.sm,
+                vertical: AppSpacing.xs,
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.emerald400.withValues(alpha: 0.09),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                'Viajes activos: $_activeTripCount · Sin ubicación: $_noLocationCount',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: AppColors.graphite200,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
             ),
           ],
@@ -980,73 +1285,102 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
 
   Widget _summaryMetric(String label, int value, Color color) {
     return Expanded(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            value.toString(),
-            style: Theme.of(context).textTheme.titleLarge?.copyWith(
-              color: color,
-              fontWeight: FontWeight.w800,
-              height: 1,
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.sm,
+          vertical: AppSpacing.xs,
+        ),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: color.withValues(alpha: 0.16)),
+        ),
+        child: Row(
+          children: [
+            Text(
+              value.toString(),
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: color,
+                fontWeight: FontWeight.w900,
+                height: 1,
+              ),
             ),
-          ),
-          const SizedBox(height: AppSpacing.xxs),
-          Text(
-            label,
-            style: Theme.of(context).textTheme.labelSmall,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
+            const SizedBox(width: AppSpacing.xs),
+            Expanded(
+              child: Text(
+                label,
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: AppColors.graphite200,
+                  fontWeight: FontWeight.w800,
+                ),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
 
   Widget _buildOperationalFilters() {
     return Material(
-      elevation: 6,
-      shadowColor: Colors.black.withValues(alpha: 0.16),
-      borderRadius: BorderRadius.circular(999),
-      color: Theme.of(context).colorScheme.surface.withValues(alpha: 0.96),
-      child: Padding(
+      elevation: 10,
+      shadowColor: Colors.black.withValues(alpha: 0.18),
+      borderRadius: BorderRadius.circular(24),
+      color: Colors.transparent,
+      child: Container(
+        constraints: const BoxConstraints(maxWidth: 680),
         padding: const EdgeInsets.all(AppSpacing.xxs),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            _filterChip('active', 'Activos', AppColors.statusActive),
-            _filterChip('stale', 'Antigua', AppColors.statusStale),
-            _filterChip('offline', 'Sin señal', AppColors.statusOffline),
-            _booleanFilterChip(
-              selected: _activeTripsOnly,
-              label: 'En viaje',
-              color: AppColors.deepGreen,
-              onTap: () {
-                setState(() {
-                  _activeTripsOnly = !_activeTripsOnly;
-                  if (_selectedCamionero != null &&
-                      _activeTripsOnly &&
-                      _selectedCamionero!['hasActiveTrip'] != true) {
-                    _camioneroSeleccionadoId = null;
-                  }
-                });
-              },
-            ),
-            _booleanFilterChip(
-              selected: _showFleetDensity,
-              label: 'Densidad',
-              color: AppColors.statusSyncing,
-              onTap:
-                  () => setState(() => _showFleetDensity = !_showFleetDensity),
-            ),
-            _booleanFilterChip(
-              selected: _showTruckerPlaces,
-              label: 'Servicios',
-              color: AppColors.emerald400,
-              onTap:
-                  () =>
-                      setState(() => _showTruckerPlaces = !_showTruckerPlaces),
-            ),
-          ],
+        decoration: BoxDecoration(
+          color: AppColors.graphite950.withValues(alpha: 0.86),
+          borderRadius: BorderRadius.circular(24),
+          border: Border.all(color: Colors.white.withValues(alpha: 0.08)),
+        ),
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _filterChip('active', 'Activos', AppColors.statusActive),
+              _filterChip('stale', 'Antigua', AppColors.statusStale),
+              _filterChip('stopped', 'Detenido', AppColors.alertWarning),
+              _filterChip('offline', 'Sin señal', AppColors.statusOffline),
+              const SizedBox(width: AppSpacing.xxs),
+              _booleanFilterChip(
+                selected: _activeTripsOnly,
+                label: 'En viaje',
+                color: AppColors.deepGreen,
+                onTap: () {
+                  setState(() {
+                    _activeTripsOnly = !_activeTripsOnly;
+                    if (_selectedCamionero != null &&
+                        _activeTripsOnly &&
+                        _selectedCamionero!['hasActiveTrip'] != true) {
+                      _camioneroSeleccionadoId = null;
+                    }
+                  });
+                },
+              ),
+              _booleanFilterChip(
+                selected: _showFleetDensity,
+                label: 'Densidad',
+                color: AppColors.statusSyncing,
+                onTap:
+                    () => setState(
+                      () => _showFleetDensity = !_showFleetDensity,
+                    ),
+              ),
+              _booleanFilterChip(
+                selected: _showTruckerPlaces,
+                label: 'Servicios',
+                color: AppColors.emerald400,
+                onTap:
+                    () => setState(
+                      () => _showTruckerPlaces = !_showTruckerPlaces,
+                    ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -1137,6 +1471,7 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
   }
 
   Widget _buildRealtimeOverlay() {
+    final notificationCount = _operationalNotifications.length;
     return Material(
       elevation: 6,
       shadowColor: Colors.black.withValues(alpha: 0.16),
@@ -1151,6 +1486,40 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             RealtimeConnectionChip(status: _realtimeStatus),
+            Stack(
+              clipBehavior: Clip.none,
+              children: [
+                IconButton(
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _showOperationalNotifications,
+                  icon: const Icon(Icons.notifications_active_outlined),
+                  tooltip: 'Notificaciones operativas',
+                ),
+                if (notificationCount > 0)
+                  Positioned(
+                    right: 6,
+                    top: 6,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 5,
+                        vertical: 1,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.alertCritical,
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                      child: Text(
+                        notificationCount > 9 ? '9+' : '$notificationCount',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
             IconButton(
               visualDensity: VisualDensity.compact,
               onPressed: () => _loadFleet(initial: false),
@@ -1173,6 +1542,84 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
           ],
         ),
       ),
+    );
+  }
+
+  void _showOperationalNotifications() {
+    final notifications = _operationalNotifications;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.42,
+          minChildSize: 0.28,
+          maxChildSize: 0.78,
+          builder: (_, controller) {
+            return Material(
+              color: AppColors.graphite950,
+              borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(AppSpacing.sheetRadius),
+              ),
+              child: ListView(
+                controller: controller,
+                padding: const EdgeInsets.all(AppSpacing.lg),
+                children: [
+                  Center(
+                    child: Container(
+                      width: 42,
+                      height: 4,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.22),
+                        borderRadius: BorderRadius.circular(999),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.lg),
+                  Text(
+                    'Notificaciones operativas',
+                    style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w900,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    'Eventos detectados desde tracking, señal y rutas activas.',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: AppColors.graphite300,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  if (notifications.isEmpty)
+                    OperationalEmptyState(
+                      icon: Icons.notifications_none_rounded,
+                      title: 'Sin novedades críticas',
+                      message:
+                          'No hay camiones detenidos, sin señal o con señal antigua en este momento.',
+                      actionLabel: 'Actualizar mapa',
+                      onAction: () {
+                        Navigator.of(context).pop();
+                        _loadFleet(initial: false);
+                      },
+                    )
+                  else
+                    ...notifications.map(
+                      (notification) => _OperationalNotificationTile(
+                        notification: notification,
+                        onTap: () {
+                          Navigator.of(context).pop();
+                          _seleccionarCamionero(notification.camioneroId);
+                        },
+                      ),
+                    ),
+                ],
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
@@ -1402,8 +1849,12 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
         ),
         Positioned(
           left: AppSpacing.md,
-          top: 168,
-          child: _buildOperationalFilters(),
+          right: 96,
+          bottom: selectedCamionero == null ? AppSpacing.md : 292,
+          child: Align(
+            alignment: Alignment.bottomLeft,
+            child: _buildOperationalFilters(),
+          ),
         ),
         if (_initialLoading)
           const OperationalLoadingPanel(message: 'Cargando flota...'),
@@ -1466,18 +1917,18 @@ class _SeguimientoScreenState extends State<SeguimientoScreen> {
             onFitFleet: _fitVisibleFleet,
             onFilter: () {
               setState(() {
-                if (_visibleStates.length == 3) {
+                if (_visibleStates.length == 4) {
                   _visibleStates
                     ..clear()
                     ..add('active');
                 } else {
                   _visibleStates
                     ..clear()
-                    ..addAll({'active', 'stale', 'offline'});
+                    ..addAll({'active', 'stale', 'stopped', 'offline'});
                 }
               });
             },
-            filterActive: _visibleStates.length != 3,
+            filterActive: _visibleStates.length != 4,
           ),
         ),
         if (selectedCamionero != null)
@@ -1550,6 +2001,70 @@ class _FleetSyncErrorCard extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+class _OperationalNotification {
+  final String title;
+  final String message;
+  final Color color;
+  final IconData icon;
+  final String camioneroId;
+  final DateTime timestamp;
+
+  const _OperationalNotification({
+    required this.title,
+    required this.message,
+    required this.color,
+    required this.icon,
+    required this.camioneroId,
+    required this.timestamp,
+  });
+}
+
+class _OperationalNotificationTile extends StatelessWidget {
+  final _OperationalNotification notification;
+  final VoidCallback onTap;
+
+  const _OperationalNotificationTile({
+    required this.notification,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.045),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: notification.color.withValues(alpha: 0.24)),
+      ),
+      child: ListTile(
+        onTap: onTap,
+        leading: Container(
+          width: 42,
+          height: 42,
+          decoration: BoxDecoration(
+            color: notification.color.withValues(alpha: 0.14),
+            borderRadius: BorderRadius.circular(16),
+          ),
+          child: Icon(notification.icon, color: notification.color),
+        ),
+        title: Text(
+          notification.title,
+          style: const TextStyle(
+            color: Colors.white,
+            fontWeight: FontWeight.w900,
+          ),
+        ),
+        subtitle: Text(
+          notification.message,
+          style: const TextStyle(color: AppColors.graphite300),
+        ),
+        trailing: const Icon(Icons.chevron_right_rounded, color: Colors.white),
       ),
     );
   }

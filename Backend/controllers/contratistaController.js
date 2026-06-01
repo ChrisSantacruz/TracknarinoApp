@@ -138,7 +138,8 @@ const obtenerFlotaTracking = async (req, res) => {
 
   try {
 
-    const contratistaId = req.usuario.id;
+    const actorId = req.usuario.id;
+    const isCliente = req.usuario.tipoUsuario === 'cliente';
     const bbox = parseBboxQuery(req.query);
     const limit = Math.min(Number(req.query.limit) || 250, 500);
     const page = Math.max(Number(req.query.page) || 1, 1);
@@ -147,7 +148,7 @@ const obtenerFlotaTracking = async (req, res) => {
     const offlineOnly = req.query.offlineOnly === 'true' || req.query.status === 'offline';
     const activeTripOnly = req.query.activeTripOnly === 'true';
 
-    const contratista = await User.findById(contratistaId)
+    const contratista = isCliente ? null : await User.findById(actorId)
 
       .select('camionerosAfiliados');
 
@@ -155,27 +156,32 @@ const obtenerFlotaTracking = async (req, res) => {
 
     const camionerosPorAfiliacionDirecta = contratista?.camionerosAfiliados || [];
 
-    const camionerosPorAfiliacionLegada = await User.find({
+    const camionerosPorAfiliacionLegada = isCliente ? [] : await User.find({
 
       tipoUsuario: 'camionero',
 
-      camionerosAfiliados: contratistaId,
+      camionerosAfiliados: actorId,
 
     }).select('_id nombre correo telefono camion');
 
 
 
     const activeTrips = await Oportunidad.find({
-
-      contratista: contratistaId,
-
       estado: { $in: ACTIVE_TRIP_STATES },
+      ...(isCliente
+        ? { ownerId: actorId, ownerType: 'CLIENTE' }
+        : {
+          $or: [
+            { contratista: actorId },
+            { ownerId: actorId },
+          ],
+        }),
+    }).sort({ updatedAt: -1 });
 
-    })
-
-      .sort({ updatedAt: -1 })
-
-      .populate('camioneroAsignado', 'nombre correo telefono camion');
+    const assignedDriverId = (trip) => {
+      const assigned = trip.camioneroAsignado;
+      return assigned?._id?.toString?.() || assigned?.toString?.() || null;
+    };
 
 
 
@@ -187,9 +193,9 @@ const obtenerFlotaTracking = async (req, res) => {
 
       ...activeTrips
 
-        .filter((trip) => trip.camioneroAsignado)
+        .map(assignedDriverId)
 
-        .map((trip) => trip.camioneroAsignado._id.toString()),
+        .filter(Boolean),
 
     ]);
 
@@ -239,9 +245,11 @@ const obtenerFlotaTracking = async (req, res) => {
 
     for (const trip of activeTrips) {
 
-      if (trip.camioneroAsignado) {
+      const camioneroAsignadoId = assignedDriverId(trip);
 
-        activeTripByCamionero.set(trip.camioneroAsignado._id.toString(), trip);
+      if (camioneroAsignadoId) {
+
+        activeTripByCamionero.set(camioneroAsignadoId, trip);
 
       }
 

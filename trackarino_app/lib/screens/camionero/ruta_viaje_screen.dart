@@ -14,6 +14,7 @@ import '../../services/oportunidad_service.dart';
 import '../../services/alerta_service.dart';
 import '../../services/ors_service.dart';
 import '../../services/route_cache_service.dart';
+import '../../services/simulation_state_cache.dart';
 import '../../simulation/simulation_route_controller.dart';
 import '../../state/trip_store.dart';
 import '../../theme/app_colors.dart';
@@ -67,6 +68,8 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
   bool _initialized = false;
   bool _isFollowingVehicle = true;
   bool _navigationMode = false;
+  bool _completionSynced = false;
+  bool _completionDialogShown = false;
 
   @override
   void initState() {
@@ -100,8 +103,92 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
     _locationSubscription?.cancel();
     _connectivitySubscription?.cancel();
     _simulationSubscription?.cancel();
+    unawaited(_persistSimulationState());
     _simulationController?.dispose();
     super.dispose();
+  }
+
+  Future<void> _persistSimulationState() async {
+    final controller = _simulationController;
+    final tripId = widget.oportunidad.id;
+    if (controller == null || tripId == null) return;
+    if (controller.status == SimulationStatus.idle ||
+        controller.status == SimulationStatus.completed) {
+      return;
+    }
+
+    await SimulationStateCache.save(
+      oportunidadId: tripId,
+      state: controller.exportState(),
+    );
+  }
+
+  void _bindSimulationController(SimulationRouteController controller) {
+    if (!identical(_simulationController, controller)) {
+      _simulationController?.dispose();
+      _simulationController = controller;
+    }
+    _simulationSubscription?.cancel();
+    _simulationSubscription = controller.snapshots.listen((snapshot) async {
+      if (!mounted) return;
+      setState(() {
+        _simulationSnapshot = snapshot;
+        _currentPosition = snapshot.position;
+        _viajeIniciado = true;
+        _navigationMode = true;
+      });
+      _evaluateRoutingState(snapshot.position);
+      if (_isFollowingVehicle) {
+        _mapController.move(snapshot.position, 16.2);
+      }
+      if (snapshot.status == SimulationStatus.completed) {
+        await _completarViajeEnServidor();
+        if (!mounted || _completionDialogShown) return;
+        _completionDialogShown = true;
+        await _mostrarResumenCompletado(snapshot);
+        return;
+      }
+      if (snapshot.status != SimulationStatus.idle) {
+        await _persistSimulationState();
+      }
+    });
+  }
+
+  Future<void> _restoreSimulationIfNeeded(LocationService locationService) async {
+    final auth = context.read<AuthService>();
+    if (!auth.isSimulationSession) return;
+    if (!_viajeIniciado || widget.oportunidad.id == null) return;
+    if (_simulationController != null) return;
+    if (_routePoints.length < 2) return;
+
+    final saved = await SimulationStateCache.load(widget.oportunidad.id!);
+    if (saved == null) return;
+
+    final controller = SimulationRouteController(
+      locationService: locationService,
+      oportunidadId: widget.oportunidad.id!,
+      routePoints: _routePoints,
+    );
+    _bindSimulationController(controller);
+    await controller.restoreState(saved);
+    await locationService.startTracking();
+
+    if (!mounted) return;
+    setState(() {
+      _viajeIniciado = true;
+      _navigationMode = true;
+    });
+  }
+
+  Future<void> _resumeSimulation() async {
+    if (_simulationController == null) {
+      final locationService = Provider.of<LocationService>(
+        context,
+        listen: false,
+      );
+      await _restoreSimulationIfNeeded(locationService);
+    }
+    _simulationController?.resume();
   }
 
   Future<void> _initializeRoute() async {
@@ -131,7 +218,9 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
 
       // Obtener ubicación actual
       final position =
-          simulatedStart == null ? await locationService.getCurrentLocation() : null;
+          simulatedStart == null
+              ? await locationService.getCurrentLocation()
+              : null;
 
       if (simulatedStart == null && position == null) {
         setState(() {
@@ -259,9 +348,12 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
         }
       });
 
-      // 7. Si el viaje ya está iniciado, cargar alertas automáticamente
+      // 7. Si el viaje ya está iniciado, cargar alertas y restaurar simulación
       if (_viajeIniciado) {
         await _cargarAlertasEnRuta();
+        if (auth.isSimulationSession) {
+          await _restoreSimulationIfNeeded(locationService);
+        }
       }
     } catch (e) {
       setState(() {
@@ -745,7 +837,8 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
       SimulationStatus.completed => 'COMPLETADO',
       SimulationStatus.idle => 'LISTO',
     };
-    final healthLabel = _routeAssessment?.health.name.toUpperCase() ?? 'PENDIENTE';
+    final healthLabel =
+        _routeAssessment?.health.name.toUpperCase() ?? 'PENDIENTE';
 
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
@@ -781,9 +874,10 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
               Text(
                 statusLabel,
                 style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: snapshot.status == SimulationStatus.signalLost
-                      ? AppColors.statusStale
-                      : AppColors.emerald300,
+                  color:
+                      snapshot.status == SimulationStatus.signalLost
+                          ? AppColors.statusStale
+                          : AppColors.emerald300,
                   fontWeight: FontWeight.w900,
                 ),
               ),
@@ -802,9 +896,13 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
                 label: '${snapshot.distanceRemainingKm.toStringAsFixed(1)} km',
                 caption: 'Restante',
               ),
-              _SimulationMetric(label: _formatEta(snapshot.eta), caption: 'ETA'),
               _SimulationMetric(
-                label: '${(snapshot.progress * 100).clamp(0, 100).toStringAsFixed(0)}%',
+                label: _formatEta(snapshot.eta),
+                caption: 'ETA',
+              ),
+              _SimulationMetric(
+                label:
+                    '${(snapshot.progress * 100).clamp(0, 100).toStringAsFixed(0)}%',
                 caption: 'Progreso',
               ),
               _SimulationMetric(label: healthLabel, caption: 'Ruta'),
@@ -834,12 +932,16 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
                 child: const Text('DETENER VIAJE'),
               ),
               OutlinedButton(
-                onPressed: () => _simulationController?.resume(),
+                onPressed: _resumeSimulation,
                 child: const Text('CONTINUAR'),
               ),
               OutlinedButton(
                 onPressed: _simularDesvioRuta,
                 child: const Text('DESVIARSE'),
+              ),
+              FilledButton.tonal(
+                onPressed: () => _simulationController?.finishNearDestination(),
+                child: const Text('FINALIZAR RUTA'),
               ),
             ],
           ),
@@ -1131,35 +1233,39 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
     final speed = await showModalBottomSheet<double>(
       context: context,
       backgroundColor: Colors.transparent,
-      builder: (context) => _SimulationSpeedSheet(
-        distanceKm: _distanciaKm ?? 0,
-      ),
+      builder:
+          (context) => _SimulationSpeedSheet(distanceKm: _distanciaKm ?? 0),
     );
     if (speed == null || !mounted) return;
 
-    _simulationController?.dispose();
-    _simulationController = SimulationRouteController(
+    try {
+      Oportunidad tripInRoute;
+      try {
+        tripInRoute = await OportunidadService.iniciarViaje(
+          widget.oportunidad.id!,
+        );
+      } catch (_) {
+        await OportunidadService.aceptarOportunidad(widget.oportunidad.id!);
+        tripInRoute = await OportunidadService.iniciarViaje(
+          widget.oportunidad.id!,
+        );
+      }
+      if (!mounted) return;
+      context.read<TripStore>().setSimulationActiveTrip(tripInRoute);
+    } catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('No se pudo iniciar el viaje simulado: $error')),
+      );
+      return;
+    }
+
+    final controller = SimulationRouteController(
       locationService: locationService,
       oportunidadId: widget.oportunidad.id!,
       routePoints: _routePoints,
     );
-    await _simulationSubscription?.cancel();
-    _simulationSubscription = _simulationController!.snapshots.listen((snapshot) {
-      if (!mounted) return;
-      setState(() {
-        _simulationSnapshot = snapshot;
-        _currentPosition = snapshot.position;
-        _viajeIniciado = true;
-        _navigationMode = true;
-      });
-      _evaluateRoutingState(snapshot.position);
-      if (_isFollowingVehicle) {
-        _mapController.move(snapshot.position, 16.2);
-      }
-      if (snapshot.status == SimulationStatus.completed) {
-        _mostrarResumenCompletado(snapshot);
-      }
-    });
+    _bindSimulationController(controller);
 
     setState(() {
       _viajeIniciado = true;
@@ -1167,14 +1273,20 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
     });
     await locationService.startTracking();
     await _cargarAlertasEnRuta();
-    await _simulationController!.start(speedKmh: speed);
+    await controller.start(speedKmh: speed);
+    await SimulationStateCache.save(
+      oportunidadId: widget.oportunidad.id!,
+      state: controller.exportState(),
+    );
   }
 
   Future<void> _simularPerdidaSenal() async {
-    _simulationController?.simulateSignalLoss();
+    await _simulationController?.simulateSignalLoss();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('SIN CONEXIÓN: posiciones guardadas en cola offline.')),
+      const SnackBar(
+        content: Text('SIN CONEXIÓN: posiciones guardadas en cola offline.'),
+      ),
     );
   }
 
@@ -1182,14 +1294,19 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
     await _simulationController?.recoverSignal();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Señal recuperada. Replay de SyncEngine ejecutado.')),
+      const SnackBar(
+        content: Text('Señal recuperada. Replay de SyncEngine ejecutado.'),
+      ),
     );
   }
 
   Future<void> _simularDesvioRuta() async {
     final current = _currentPosition;
     if (current == null) return;
-    final deviation = LatLng(current.latitude + 0.006, current.longitude + 0.006);
+    final deviation = LatLng(
+      current.latitude + 0.006,
+      current.longitude + 0.006,
+    );
     await _simulationController?.deviateToward(deviation);
     _evaluateRoutingState(deviation);
   }
@@ -1204,37 +1321,109 @@ class _RutaViajeScreenState extends State<RutaViajeScreen> {
     _simulationController?.stopWithReason(reason);
   }
 
+  Future<bool> _completarViajeEnServidor() async {
+    if (_completionSynced || widget.oportunidad.id == null) {
+      return _completionSynced;
+    }
+
+    try {
+      await OportunidadService.confirmarEntrega(widget.oportunidad.id!);
+      _completionSynced = true;
+      final auth = context.read<AuthService>();
+      if (auth.isSimulationSession) {
+        await auth.bumpSimulationCompletedTrip();
+      }
+      await SimulationStateCache.clear(widget.oportunidad.id!);
+      context.read<TripStore>().clearActiveTrip();
+      return true;
+    } catch (error) {
+      if (!mounted) return false;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('No se pudo confirmar la entrega en servidor: $error'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return false;
+    }
+  }
+
   Future<void> _mostrarResumenCompletado(SimulationSnapshot snapshot) async {
     if (!mounted) return;
-    context.read<TripStore>().clearActiveTrip();
     await showDialog<void>(
       context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Viaje completado'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Distancia recorrida: ${(_distanciaKm ?? 0).toStringAsFixed(1)} km'),
-            Text('Paradas realizadas: ${snapshot.stopsMade}'),
-            Text('Alertas creadas: ${snapshot.alertsCreated}'),
-            Text('Desviaciones: ${snapshot.deviations}'),
-            Text(
-              'Sincronización: ${snapshot.synchronizing ? 'en progreso' : 'completa'}',
+      barrierDismissible: false,
+      builder:
+          (context) => AlertDialog(
+            backgroundColor: AppColors.graphite950,
+            surfaceTintColor: Colors.transparent,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(28),
+              side: BorderSide(
+                color: AppColors.emerald400.withValues(alpha: 0.28),
+              ),
             ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: _informarLlegadaWhatsApp,
-            child: const Text('INFORMAR LLEGADA'),
+            icon: Container(
+              width: 58,
+              height: 58,
+              decoration: BoxDecoration(
+                color: AppColors.emerald400.withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: const Icon(
+                Icons.flag_rounded,
+                color: AppColors.emerald300,
+                size: 30,
+              ),
+            ),
+            title: const Text(
+              'Llegada confirmada',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'La carga fue marcada como entregada. El contratista puede calificar el servicio desde su panel.',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: AppColors.graphite300),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Text(
+                  'Distancia: ${(_distanciaKm ?? 0).toStringAsFixed(1)} km',
+                  style: const TextStyle(color: AppColors.graphite200),
+                ),
+                Text(
+                  'Paradas: ${snapshot.stopsMade} · Alertas: ${snapshot.alertsCreated}',
+                  style: const TextStyle(color: AppColors.graphite200),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: _informarLlegadaWhatsApp,
+                child: const Text('WhatsApp'),
+              ),
+              FilledButton(
+                style: FilledButton.styleFrom(
+                  backgroundColor: AppColors.emerald500,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () {
+                  Navigator.of(context).pop();
+                  if (Navigator.of(this.context).canPop()) {
+                    Navigator.of(this.context).pop();
+                  }
+                },
+                child: const Text('Finalizar'),
+              ),
+            ],
           ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('Cerrar'),
-          ),
-        ],
-      ),
     );
   }
 
@@ -1886,24 +2075,27 @@ class _SimulationSpeedSheet extends StatelessWidget {
               const SizedBox(height: AppSpacing.xs),
               Text(
                 'El ETA se calcula contra la distancia real de la ruta.',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: AppColors.graphite300,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: AppColors.graphite300),
               ),
               const SizedBox(height: AppSpacing.md),
               Wrap(
                 spacing: AppSpacing.sm,
                 runSpacing: AppSpacing.sm,
-                children: speeds.map((speed) {
-                  final etaMinutes =
-                      distanceKm <= 0 ? 0 : ((distanceKm / speed) * 60).round();
-                  return FilledButton.tonal(
-                    onPressed: () => Navigator.of(context).pop(speed),
-                    child: Text(
-                      '${speed.toStringAsFixed(0)} km/h · $etaMinutes min',
-                    ),
-                  );
-                }).toList(),
+                children:
+                    speeds.map((speed) {
+                      final etaMinutes =
+                          distanceKm <= 0
+                              ? 0
+                              : ((distanceKm / speed) * 60).round();
+                      return FilledButton.tonal(
+                        onPressed: () => Navigator.of(context).pop(speed),
+                        child: Text(
+                          '${speed.toStringAsFixed(0)} km/h · $etaMinutes min',
+                        ),
+                      );
+                    }).toList(),
               ),
             ],
           ),
@@ -1951,14 +2143,15 @@ class _StopReasonSheet extends StatelessWidget {
               Wrap(
                 spacing: AppSpacing.sm,
                 runSpacing: AppSpacing.sm,
-                children: reasons
-                    .map(
-                      (reason) => OutlinedButton(
-                        onPressed: () => Navigator.of(context).pop(reason),
-                        child: Text(reason),
-                      ),
-                    )
-                    .toList(),
+                children:
+                    reasons
+                        .map(
+                          (reason) => OutlinedButton(
+                            onPressed: () => Navigator.of(context).pop(reason),
+                            child: Text(reason),
+                          ),
+                        )
+                        .toList(),
               ),
             ],
           ),

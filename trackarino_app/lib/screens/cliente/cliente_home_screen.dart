@@ -12,6 +12,7 @@ import '../../widgets/operational/operational_error_state.dart';
 import '../../widgets/operational/operational_skeleton.dart';
 import '../../widgets/operational/premium_operational_widgets.dart';
 import '../contratista/crear_oportunidad_screen.dart';
+import '../contratista/seguimiento_screen.dart';
 
 class ClienteHomeScreen extends StatefulWidget {
   final User usuario;
@@ -56,9 +57,24 @@ class _ClienteHomeScreenState extends State<ClienteHomeScreen> {
   }
 
   Future<void> _openCreate() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const CrearOportunidadScreen()),
+    final hasActiveLoad = _trips.any(
+      (trip) =>
+          !['entregada', 'cancelada'].contains(trip.estado) && !trip.finalizada,
     );
+    if (hasActiveLoad) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Como cliente solo puedes tener una carga activa a la vez.',
+          ),
+        ),
+      );
+      return;
+    }
+
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const CrearOportunidadScreen()));
     if (mounted) _loadTrips();
   }
 
@@ -87,6 +103,7 @@ class _ClienteHomeScreenState extends State<ClienteHomeScreen> {
         onRefresh: _loadTrips,
         onOpenOffers: _openOffers,
       ),
+      SeguimientoScreen(onTripCompleted: _loadTrips),
       _HistoryTab(trips: _trips),
       _ProfileTab(usuario: widget.usuario),
     ];
@@ -116,11 +133,17 @@ class _ClienteHomeScreenState extends State<ClienteHomeScreen> {
         body: tabs[_selectedIndex],
         bottomNavigationBar: NavigationBar(
           selectedIndex: _selectedIndex,
-          onDestinationSelected: (index) => setState(() => _selectedIndex = index),
+          onDestinationSelected:
+              (index) => setState(() => _selectedIndex = index),
           destinations: const [
             NavigationDestination(
               icon: Icon(Icons.inventory_2_outlined),
               label: 'Cargas',
+            ),
+            NavigationDestination(
+              icon: Icon(Icons.map_outlined),
+              selectedIcon: Icon(Icons.map_rounded),
+              label: 'Mapa',
             ),
             NavigationDestination(
               icon: Icon(Icons.history_rounded),
@@ -196,7 +219,9 @@ class _TripCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final ownerLabel =
-        trip.ownerType == 'CLIENTE' ? 'Publicado por Cliente' : 'Publicado por Contratista';
+        trip.ownerType == 'CLIENTE'
+            ? 'Publicado por Cliente'
+            : 'Publicado por Contratista';
 
     return PremiumGlassCard(
       padding: const EdgeInsets.all(AppSpacing.lg),
@@ -223,6 +248,23 @@ class _TripCard extends StatelessWidget {
             '${trip.origen} → ${trip.destino}',
             style: theme.textTheme.bodyMedium?.copyWith(
               color: AppColors.graphite200,
+            ),
+          ),
+          if (trip.incentivoPrioridad > 0) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'Bono por prioridad: \$${trip.incentivoPrioridad.toStringAsFixed(0)}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: AppColors.statusStale,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'Monitoreo: ${trip.camioneroAsignado == null ? 'esperando transportista' : 'transportista asignado'}',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: AppColors.graphite300,
             ),
           ),
           const SizedBox(height: AppSpacing.md),
@@ -308,16 +350,17 @@ class _OffersSheetState extends State<_OffersSheet> {
           children: [
             Text(
               'Ofertas recibidas',
-              style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w900,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.w900),
             ),
             const SizedBox(height: AppSpacing.md),
             if (_loading) const LinearProgressIndicator(),
             if (_error != null) Text(_error!),
             if (!_loading && _offers.isEmpty)
               const Text('Aún no hay ofertas para esta carga.'),
-            for (final offer in _offers) _OfferTile(offer: offer, onAccept: _accept, onReject: _reject),
+            for (final offer in _offers)
+              _OfferTile(offer: offer, onAccept: _accept, onReject: _reject),
           ],
         ),
       ),
@@ -340,14 +383,31 @@ class _OfferTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final camionero = offer['camionero'];
     final camioneroName =
-        camionero is Map ? (camionero['nombre'] ?? 'Camionero').toString() : 'Camionero';
+        camionero is Map
+            ? (camionero['nombre'] ?? 'Camionero').toString()
+            : 'Camionero';
+    final camioneroTelefono =
+        camionero is Map ? camionero['telefono']?.toString() : null;
+    final camion =
+        camionero is Map && camionero['camion'] is Map
+            ? camionero['camion'] as Map
+            : null;
     final offerId = (offer['_id'] ?? offer['id']).toString();
     final estado = (offer['estado'] ?? 'pendiente').toString();
 
     return ListTile(
       contentPadding: EdgeInsets.zero,
       title: Text(camioneroName),
-      subtitle: Text('${offer['precio']} COP · $estado'),
+      subtitle: Text(
+        [
+          '${offer['precio']} COP',
+          estado,
+          if (camioneroTelefono != null) camioneroTelefono,
+          if (camion != null)
+            '${camion['tipoVehiculo'] ?? 'Vehículo'} ${camion['placa'] ?? ''}'
+                .trim(),
+        ].join(' · '),
+      ),
       trailing:
           estado == 'pendiente'
               ? Wrap(
@@ -375,13 +435,15 @@ class _HistoryTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final completed = trips.where((trip) => trip.estado == 'entregada').toList();
+    final completed =
+        trips.where((trip) => trip.estado == 'entregada').toList();
     return ListView(
       padding: const EdgeInsets.all(AppSpacing.lg),
       children: [
         Text('Viajes realizados: ${completed.length}'),
         const SizedBox(height: AppSpacing.md),
-        for (final trip in completed) ListTile(title: Text(trip.titulo), subtitle: Text(trip.destino)),
+        for (final trip in completed)
+          ListTile(title: Text(trip.titulo), subtitle: Text(trip.destino)),
       ],
     );
   }
@@ -409,7 +471,10 @@ class _ProfileTab extends StatelessWidget {
               ),
             ),
             const SizedBox(height: AppSpacing.xs),
-            Text(usuario.correo, style: const TextStyle(color: AppColors.graphite300)),
+            Text(
+              usuario.correo,
+              style: const TextStyle(color: AppColors.graphite300),
+            ),
             const SizedBox(height: AppSpacing.md),
             Text(
               'Cliente · ${usuario.calificacion?.toStringAsFixed(1) ?? 'Sin calificaciones'}',

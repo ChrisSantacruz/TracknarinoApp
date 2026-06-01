@@ -81,6 +81,20 @@ function validateTrackingPayload(body, camioneroId) {
       accuracy,
       signal,
       source,
+      trackingStatusOverride: ['active', 'stopped', 'offline'].includes(body.trackingStatusOverride)
+        ? body.trackingStatusOverride
+        : undefined,
+      operationalEvent: body.operationalEvent && typeof body.operationalEvent === 'object'
+        ? {
+          type: ['movement', 'stopped', 'signal_lost', 'signal_recovered'].includes(body.operationalEvent.type)
+            ? body.operationalEvent.type
+            : undefined,
+          reason: typeof body.operationalEvent.reason === 'string'
+            ? body.operationalEvent.reason.trim()
+            : undefined,
+          reportedAt: parseTimestamp(body.operationalEvent.reportedAt) || new Date(),
+        }
+        : undefined,
       clientEventId,
       sequence: normalizeNumber(body.sequence),
     },
@@ -102,6 +116,28 @@ function getTrackingStatusFromLocation(location) {
       isStale: false,
       isOffline: true,
       lastSeenAt: null,
+    };
+  }
+
+  if (location.trackingStatusOverride === 'offline') {
+    return {
+      trackingStatus: 'offline',
+      ageMs: 0,
+      isStale: false,
+      isOffline: true,
+      lastSeenAt: location.timestamp,
+      serverReceivedAt: location.serverReceivedAt || location.timestamp,
+    };
+  }
+
+  if (location.trackingStatusOverride === 'stopped') {
+    return {
+      trackingStatus: 'stopped',
+      ageMs: 0,
+      isStale: false,
+      isOffline: false,
+      lastSeenAt: location.timestamp,
+      serverReceivedAt: location.serverReceivedAt || location.timestamp,
     };
   }
 

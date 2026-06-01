@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -23,8 +24,13 @@ class PerfilCamioneroScreen extends StatefulWidget {
 
 class _PerfilCamioneroScreenState extends State<PerfilCamioneroScreen> {
   final ImagePicker _picker = ImagePicker();
-  final List<String> _metodosPago = ['Visa', 'Nequi', 'Efectivo'];
-  String? _selectedMetodoPago;
+  final List<String> _metodosPago = [
+    'Nequi',
+    'Transferencia bancaria',
+    'Efectivo',
+    'Daviplata',
+  ];
+  Set<String> _selectedMetodosPago = {};
   Uint8List? _avatarBytes;
   bool _isDisponible = true;
   bool _isLoading = false;
@@ -32,7 +38,10 @@ class _PerfilCamioneroScreenState extends State<PerfilCamioneroScreen> {
   @override
   void initState() {
     super.initState();
-    _selectedMetodoPago = widget.usuario?.metodoPago;
+    _selectedMetodosPago = {
+      ...?widget.usuario?.metodosPago,
+      if (widget.usuario?.metodoPago != null) widget.usuario!.metodoPago!,
+    };
     _cargarEstadoInicial();
     _cargarPerfilCamionero();
   }
@@ -51,7 +60,10 @@ class _PerfilCamioneroScreenState extends State<PerfilCamioneroScreen> {
           await context.read<AuthService>().obtenerPerfilCamionero();
       if (usuario != null && mounted) {
         setState(() {
-          _selectedMetodoPago = usuario.metodoPago;
+          _selectedMetodosPago = {
+            ...usuario.metodosPago,
+            if (usuario.metodoPago != null) usuario.metodoPago!,
+          };
           _isDisponible = usuario.isDisponible;
         });
       }
@@ -75,13 +87,13 @@ class _PerfilCamioneroScreenState extends State<PerfilCamioneroScreen> {
       if (!mounted) return;
 
       setState(() => _avatarBytes = bytes);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Imagen actualizada en esta sesión. Subida al servidor pendiente.',
-          ),
-        ),
-      );
+      await context.read<AuthService>().actualizarPerfil({
+        'fotoPerfil': 'data:image/jpeg;base64,${base64Encode(bytes)}',
+      });
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Foto de perfil guardada')));
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -90,22 +102,30 @@ class _PerfilCamioneroScreenState extends State<PerfilCamioneroScreen> {
     }
   }
 
-  Future<void> _actualizarMetodoPago(String metodoPago) async {
-    final previous = _selectedMetodoPago;
+  Future<void> _toggleMetodoPago(String metodoPago) async {
+    final previous = Set<String>.from(_selectedMetodosPago);
     setState(() {
       _isLoading = true;
-      _selectedMetodoPago = metodoPago;
+      if (_selectedMetodosPago.contains(metodoPago)) {
+        _selectedMetodosPago.remove(metodoPago);
+      } else {
+        _selectedMetodosPago.add(metodoPago);
+      }
     });
 
     try {
-      await context.read<AuthService>().actualizarMetodoPago(metodoPago);
+      await context.read<AuthService>().actualizarPerfil({
+        'metodosPago': _selectedMetodosPago.toList(),
+        'metodoPago':
+            _selectedMetodosPago.isEmpty ? null : _selectedMetodosPago.first,
+      });
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Método de pago actualizado')),
+        const SnackBar(content: Text('Métodos de pago actualizados')),
       );
     } catch (e) {
       if (!mounted) return;
-      setState(() => _selectedMetodoPago = previous);
+      setState(() => _selectedMetodosPago = previous);
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('No se pudo actualizar: $e')));
@@ -163,7 +183,7 @@ class _PerfilCamioneroScreenState extends State<PerfilCamioneroScreen> {
   @override
   Widget build(BuildContext context) {
     final authService = context.watch<AuthService>();
-    final usuario = widget.usuario ?? authService.currentUser;
+    final usuario = authService.currentUser ?? widget.usuario;
 
     if (usuario == null) {
       return const PremiumGradientScaffold(
@@ -211,9 +231,9 @@ class _PerfilCamioneroScreenState extends State<PerfilCamioneroScreen> {
                     const SizedBox(height: AppSpacing.md),
                     _PaymentCard(
                       methods: _metodosPago,
-                      selected: _selectedMetodoPago,
+                      selected: _selectedMetodosPago,
                       loading: _isLoading,
-                      onSelected: _actualizarMetodoPago,
+                      onSelected: _toggleMetodoPago,
                     ),
                     const SizedBox(height: AppSpacing.md),
                     _SettingsCard(onLogout: _cerrarSesion),
@@ -332,7 +352,7 @@ class _ProfileHero extends StatelessWidget {
                     ),
                     const SizedBox(height: AppSpacing.sm),
                     PremiumStatusPill(
-                      label: disponible ? 'Disponible' : 'Offline',
+                      label: disponible ? 'Disponible' : 'En viaje',
                       color: statusColor,
                     ),
                   ],
@@ -451,10 +471,7 @@ class _VehicleCard extends StatelessWidget {
             color: AppColors.statusStale,
           ),
           PremiumInfoRow(
-            icon:
-                unidadCapacidad == 'pasajeros'
-                    ? Icons.groups_outlined
-                    : Icons.scale_outlined,
+            icon: Icons.scale_outlined,
             label: 'Capacidad',
             value:
                 '${camion['capacidadCarga'] ?? 'No especificada'} $unidadCapacidad',
@@ -468,7 +485,7 @@ class _VehicleCard extends StatelessWidget {
 
 class _PaymentCard extends StatelessWidget {
   final List<String> methods;
-  final String? selected;
+  final Set<String> selected;
   final bool loading;
   final ValueChanged<String> onSelected;
 
@@ -494,7 +511,7 @@ class _PaymentCard extends StatelessWidget {
           ),
           const SizedBox(height: AppSpacing.xs),
           Text(
-            'Selecciona solo métodos admitidos por el backend actual.',
+            'Selecciona los métodos que recibes para tus viajes.',
             style: Theme.of(
               context,
             ).textTheme.bodySmall?.copyWith(color: AppColors.graphite300),
@@ -505,7 +522,7 @@ class _PaymentCard extends StatelessWidget {
             runSpacing: AppSpacing.xs,
             children:
                 methods.map((method) {
-                  final isSelected = method == selected;
+                  final isSelected = selected.contains(method);
                   return ChoiceChip(
                     label: Text(method),
                     selected: isSelected,
@@ -534,12 +551,6 @@ class _SettingsCard extends StatelessWidget {
             label: 'Notificaciones',
             value: 'Gestionadas por el servicio actual',
             color: AppColors.statusSyncing,
-          ),
-          PremiumInfoRow(
-            icon: Icons.sync_outlined,
-            label: 'Sincronización',
-            value: 'Offline queue y realtime activos',
-            color: AppColors.emerald400,
           ),
           PremiumInfoRow(
             icon: Icons.logout_rounded,

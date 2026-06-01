@@ -64,6 +64,20 @@ const ubicacionSchema = new mongoose.Schema({
 
   },
 
+  trackingStatusOverride: {
+    type: String,
+    enum: ['active', 'stopped', 'offline'],
+  },
+
+  operationalEvent: {
+    type: {
+      type: String,
+      enum: ['movement', 'stopped', 'signal_lost', 'signal_recovered'],
+    },
+    reason: { type: String, trim: true },
+    reportedAt: { type: Date },
+  },
+
   clientEventId: { type: String, trim: true },
 
   sequence: { type: Number },

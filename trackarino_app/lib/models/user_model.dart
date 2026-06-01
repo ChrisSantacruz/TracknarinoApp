@@ -9,6 +9,11 @@ class User {
   final String? numeroCedula;
   final Map<String, dynamic>? camion;
   final String? metodoPago;
+  final List<String> metodosPago;
+  final String? descripcionOperacion;
+  final int? anioFundacion;
+  final String? ubicacionEmpresa;
+  final String? sitioWeb;
   final String? authProvider;
   final String? fotoPerfil;
   final bool rolConfigurado;
@@ -29,6 +34,11 @@ class User {
     this.numeroCedula,
     this.camion,
     this.metodoPago,
+    this.metodosPago = const [],
+    this.descripcionOperacion,
+    this.anioFundacion,
+    this.ubicacionEmpresa,
+    this.sitioWeb,
     this.authProvider,
     this.fotoPerfil,
     this.rolConfigurado = true,
@@ -49,16 +59,38 @@ class User {
       empresa: json['empresa'],
       empresaAfiliada: json['empresaAfiliada'],
       numeroCedula: json['numeroCedula'],
-      camion: json['camion'] != null 
-          ? Map<String, dynamic>.from(json['camion']) 
-          : null,
+      camion:
+          json['camion'] != null
+              ? Map<String, dynamic>.from(json['camion'])
+              : null,
       metodoPago: json['metodoPago'],
+      metodosPago:
+          (json['metodosPago'] as List?)
+              ?.map((value) => value.toString())
+              .toList() ??
+          const [],
+      descripcionOperacion: json['descripcionOperacion'],
+      anioFundacion:
+          json['anioFundacion'] is num
+              ? (json['anioFundacion'] as num).toInt()
+              : null,
+      ubicacionEmpresa: json['ubicacionEmpresa'],
+      sitioWeb: json['sitioWeb'],
       authProvider: json['authProvider'],
       fotoPerfil: json['fotoPerfil'],
-      rolConfigurado: json['rolConfigurado'] ?? (json['tipoUsuario'] != 'usuario'),
+      rolConfigurado:
+          json['rolConfigurado'] ?? (json['tipoUsuario'] != 'usuario'),
       isDisponible: json['isDisponible'] ?? false,
-      calificacion: json['calificacion']?.toDouble(),
-      viajesCompletados: json['viajesCompletados'],
+      calificacion:
+          json['calificacion']?.toDouble() ??
+          (json['reputation'] is Map
+              ? (json['reputation']['promedio'] as num?)?.toDouble()
+              : null),
+      viajesCompletados:
+          json['viajesCompletados'] ??
+          (json['reputation'] is Map
+              ? (json['reputation']['totalViajes'] as num?)?.toInt()
+              : null),
       sessionType: json['sessionType'],
       isSimulation:
           json['isSimulation'] == true ||
@@ -78,6 +110,12 @@ class User {
       if (numeroCedula != null) 'numeroCedula': numeroCedula,
       if (camion != null) 'camion': camion,
       if (metodoPago != null) 'metodoPago': metodoPago,
+      if (metodosPago.isNotEmpty) 'metodosPago': metodosPago,
+      if (descripcionOperacion != null)
+        'descripcionOperacion': descripcionOperacion,
+      if (anioFundacion != null) 'anioFundacion': anioFundacion,
+      if (ubicacionEmpresa != null) 'ubicacionEmpresa': ubicacionEmpresa,
+      if (sitioWeb != null) 'sitioWeb': sitioWeb,
       if (authProvider != null) 'authProvider': authProvider,
       if (fotoPerfil != null) 'fotoPerfil': fotoPerfil,
       'rolConfigurado': rolConfigurado,
@@ -94,6 +132,11 @@ class User {
     String? telefono,
     String? empresa,
     String? metodoPago,
+    List<String>? metodosPago,
+    String? descripcionOperacion,
+    int? anioFundacion,
+    String? ubicacionEmpresa,
+    String? sitioWeb,
     String? tipoUsuario,
     String? authProvider,
     String? fotoPerfil,
@@ -116,6 +159,11 @@ class User {
       numeroCedula: numeroCedula,
       camion: camion ?? this.camion,
       metodoPago: metodoPago ?? this.metodoPago,
+      metodosPago: metodosPago ?? this.metodosPago,
+      descripcionOperacion: descripcionOperacion ?? this.descripcionOperacion,
+      anioFundacion: anioFundacion ?? this.anioFundacion,
+      ubicacionEmpresa: ubicacionEmpresa ?? this.ubicacionEmpresa,
+      sitioWeb: sitioWeb ?? this.sitioWeb,
       authProvider: authProvider ?? this.authProvider,
       fotoPerfil: fotoPerfil ?? this.fotoPerfil,
       rolConfigurado: rolConfigurado ?? this.rolConfigurado,
@@ -126,4 +174,4 @@ class User {
       isSimulation: isSimulation ?? this.isSimulation,
     );
   }
-} 
+}
